@@ -819,6 +819,8 @@ esp_err_t esp_hid_gap_init(uint8_t mode)
         bt_hidh_cb_semaphore = NULL;
         vSemaphoreDelete(ble_hidh_cb_semaphore);
         ble_hidh_cb_semaphore = NULL;
+        vSemaphoreDelete(scan_mutex);
+        scan_mutex = NULL;
         return ret;
     }
 
