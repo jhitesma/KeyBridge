@@ -235,13 +235,32 @@ bool saveConfig(const AdapterConfig &cfg) {
 bool loadConfig(AdapterConfig &cfg) {
     prefs.begin("kb_cfg", true);
     uint32_t version = prefs.getUInt("version", 0);
-    if (version == 0) {
+    if (version != 5) {
         prefs.end();
-        return false; // No saved config
+        return false; // No saved config or version mismatch
     }
     size_t readLen = prefs.getBytes("config", &cfg, sizeof(cfg));
     prefs.end();
-    return (readLen == sizeof(cfg));
+    if (readLen != sizeof(cfg)) return false;
+
+    // Ensure string fields are null-terminated after blob load
+    cfg.wifi_ssid[sizeof(cfg.wifi_ssid) - 1] = '\0';
+    cfg.wifi_password[sizeof(cfg.wifi_password) - 1] = '\0';
+    cfg.sta_ssid[sizeof(cfg.sta_ssid) - 1] = '\0';
+    cfg.sta_password[sizeof(cfg.sta_password) - 1] = '\0';
+    cfg.hostname[sizeof(cfg.hostname) - 1] = '\0';
+    for (int i = 0; i < MAX_SPECIAL_KEYS; i++) {
+        cfg.special_keys[i].label[sizeof(cfg.special_keys[i].label) - 1] = '\0';
+        cfg.special_keys[i].seq_native[sizeof(cfg.special_keys[i].seq_native) - 1] = '\0';
+        cfg.special_keys[i].seq_ansi[sizeof(cfg.special_keys[i].seq_ansi) - 1] = '\0';
+    }
+
+    // Clamp num_special_keys to valid range
+    if (cfg.num_special_keys > MAX_SPECIAL_KEYS) {
+        cfg.num_special_keys = MAX_SPECIAL_KEYS;
+    }
+
+    return true;
 }
 
 void eraseConfig() {
@@ -350,7 +369,8 @@ String configToJson(const AdapterConfig &cfg) {
 
     // Special keys
     JsonArray keys = doc["special_keys"].to<JsonArray>();
-    for (int i = 0; i < cfg.num_special_keys; i++) {
+    int count = (cfg.num_special_keys <= MAX_SPECIAL_KEYS) ? cfg.num_special_keys : MAX_SPECIAL_KEYS;
+    for (int i = 0; i < count; i++) {
         if (!cfg.special_keys[i].enabled && cfg.special_keys[i].hid_keycode == 0) continue;
         JsonObject k      = keys.add<JsonObject>();
         k["keycode"]      = cfg.special_keys[i].hid_keycode;
@@ -367,6 +387,13 @@ String configToJson(const AdapterConfig &cfg) {
     return output;
 }
 
+static bool isValidGPIO(int8_t pin) {
+    if (pin == -1) return true;
+    if (pin < 0 || pin > 48) return false;
+    if (pin >= 26 && pin <= 32) return false; // SPI flash/PSRAM
+    return true;
+}
+
 bool jsonToConfig(const String &json, AdapterConfig &cfg) {
     JsonDocument doc;
     DeserializationError err = deserializeJson(doc, json);
@@ -375,18 +402,18 @@ bool jsonToConfig(const String &json, AdapterConfig &cfg) {
     // Pins
     if (doc.containsKey("pins")) {
         JsonObject pins = doc["pins"];
-        if (pins.containsKey("d0")) cfg.pin_d0 = pins["d0"];
-        if (pins.containsKey("d1")) cfg.pin_d1 = pins["d1"];
-        if (pins.containsKey("d2")) cfg.pin_d2 = pins["d2"];
-        if (pins.containsKey("d3")) cfg.pin_d3 = pins["d3"];
-        if (pins.containsKey("d4")) cfg.pin_d4 = pins["d4"];
-        if (pins.containsKey("d5")) cfg.pin_d5 = pins["d5"];
-        if (pins.containsKey("d6")) cfg.pin_d6 = pins["d6"];
-        if (pins.containsKey("strobe")) cfg.pin_strobe = pins["strobe"];
-        if (pins.containsKey("pair_btn")) cfg.pin_pair_btn = pins["pair_btn"];
-        if (pins.containsKey("mode_jp")) cfg.pin_mode_jp = pins["mode_jp"];
-        if (pins.containsKey("led")) cfg.pin_led = pins["led"];
-        if (pins.containsKey("bt_led")) cfg.pin_bt_led = pins["bt_led"];
+        if (pins.containsKey("d0")) { int8_t v = pins["d0"]; if (isValidGPIO(v)) cfg.pin_d0 = v; }
+        if (pins.containsKey("d1")) { int8_t v = pins["d1"]; if (isValidGPIO(v)) cfg.pin_d1 = v; }
+        if (pins.containsKey("d2")) { int8_t v = pins["d2"]; if (isValidGPIO(v)) cfg.pin_d2 = v; }
+        if (pins.containsKey("d3")) { int8_t v = pins["d3"]; if (isValidGPIO(v)) cfg.pin_d3 = v; }
+        if (pins.containsKey("d4")) { int8_t v = pins["d4"]; if (isValidGPIO(v)) cfg.pin_d4 = v; }
+        if (pins.containsKey("d5")) { int8_t v = pins["d5"]; if (isValidGPIO(v)) cfg.pin_d5 = v; }
+        if (pins.containsKey("d6")) { int8_t v = pins["d6"]; if (isValidGPIO(v)) cfg.pin_d6 = v; }
+        if (pins.containsKey("strobe")) { int8_t v = pins["strobe"]; if (isValidGPIO(v)) cfg.pin_strobe = v; }
+        if (pins.containsKey("pair_btn")) { int8_t v = pins["pair_btn"]; if (isValidGPIO(v)) cfg.pin_pair_btn = v; }
+        if (pins.containsKey("mode_jp")) { int8_t v = pins["mode_jp"]; if (isValidGPIO(v)) cfg.pin_mode_jp = v; }
+        if (pins.containsKey("led")) { int8_t v = pins["led"]; if (isValidGPIO(v)) cfg.pin_led = v; }
+        if (pins.containsKey("bt_led")) { int8_t v = pins["bt_led"]; if (isValidGPIO(v)) cfg.pin_bt_led = v; }
     }
 
     // Terminal
@@ -400,11 +427,11 @@ bool jsonToConfig(const String &json, AdapterConfig &cfg) {
     // Timing
     if (doc.containsKey("timing")) {
         JsonObject t = doc["timing"];
-        if (t.containsKey("strobe_pulse_us")) cfg.strobe_pulse_us = t["strobe_pulse_us"];
-        if (t.containsKey("data_setup_us")) cfg.data_setup_us = t["data_setup_us"];
-        if (t.containsKey("inter_char_delay_us")) cfg.inter_char_delay_us = t["inter_char_delay_us"];
-        if (t.containsKey("repeat_delay_ms")) cfg.repeat_delay_ms = t["repeat_delay_ms"];
-        if (t.containsKey("repeat_rate_ms")) cfg.repeat_rate_ms = t["repeat_rate_ms"];
+        if (t.containsKey("strobe_pulse_us")) { uint16_t v = t["strobe_pulse_us"]; if (v >= 1 && v <= 1000) cfg.strobe_pulse_us = v; }
+        if (t.containsKey("data_setup_us")) { uint16_t v = t["data_setup_us"]; if (v >= 1 && v <= 100) cfg.data_setup_us = v; }
+        if (t.containsKey("inter_char_delay_us")) { uint16_t v = t["inter_char_delay_us"]; if (v <= 10000) cfg.inter_char_delay_us = v; }
+        if (t.containsKey("repeat_delay_ms")) { uint16_t v = t["repeat_delay_ms"]; if (v >= 50 && v <= 5000) cfg.repeat_delay_ms = v; }
+        if (t.containsKey("repeat_rate_ms")) { uint16_t v = t["repeat_rate_ms"]; if (v >= 10 && v <= 1000) cfg.repeat_rate_ms = v; }
     }
 
     // Features
@@ -421,7 +448,10 @@ bool jsonToConfig(const String &json, AdapterConfig &cfg) {
         JsonObject w = doc["wifi"];
         if (w.containsKey("ap_ssid")) strlcpy(cfg.wifi_ssid, w["ap_ssid"] | "", sizeof(cfg.wifi_ssid));
         if (w.containsKey("ap_password")) strlcpy(cfg.wifi_password, w["ap_password"] | "", sizeof(cfg.wifi_password));
-        if (w.containsKey("ap_channel")) cfg.wifi_channel = w["ap_channel"];
+        if (w.containsKey("ap_channel")) {
+            uint8_t ch = w["ap_channel"];
+            if (ch >= 1 && ch <= 13) cfg.wifi_channel = ch;
+        }
         if (w.containsKey("sta_ssid")) strlcpy(cfg.sta_ssid, w["sta_ssid"] | "", sizeof(cfg.sta_ssid));
         if (w.containsKey("sta_password")) strlcpy(cfg.sta_password, w["sta_password"] | "", sizeof(cfg.sta_password));
         if (w.containsKey("hostname")) strlcpy(cfg.hostname, w["hostname"] | "", sizeof(cfg.hostname));
