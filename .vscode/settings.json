@@ -1,0 +1,7 @@
+{
+  "files.associations": {
+    "*.ino": "cpp"
+  },
+  "editor.formatOnSave": false,
+  "C_Cpp.default.configurationProvider": "platformio.platformio-ide"
+}
