@@ -44,6 +44,8 @@ static xSemaphoreHandle ble_hidh_cb_semaphore = NULL;
 #define WAIT_BLE_CB() xSemaphoreTake(ble_hidh_cb_semaphore, portMAX_DELAY)
 #define SEND_BLE_CB() xSemaphoreGive(ble_hidh_cb_semaphore)
 
+static SemaphoreHandle_t scan_mutex = NULL;
+
 #define SIZEOF_ARRAY(a) (sizeof(a)/sizeof(*a))
 
 static const char *ble_gap_evt_names[] = { "ADV_DATA_SET_COMPLETE", "SCAN_RSP_DATA_SET_COMPLETE", "SCAN_PARAM_SET_COMPLETE", "SCAN_RESULT", "ADV_DATA_RAW_SET_COMPLETE", "SCAN_RSP_DATA_RAW_SET_COMPLETE", "ADV_START_COMPLETE", "SCAN_START_COMPLETE", "AUTH_CMPL", "KEY", "SEC_REQ", "PASSKEY_NOTIF", "PASSKEY_REQ", "OOB_REQ", "LOCAL_IR", "LOCAL_ER", "NC_REQ", "ADV_STOP_COMPLETE", "SCAN_STOP_COMPLETE", "SET_STATIC_RAND_ADDR", "UPDATE_CONN_PARAMS", "SET_PKT_LENGTH_COMPLETE", "SET_LOCAL_PRIVACY_COMPLETE", "REMOVE_BOND_DEV_COMPLETE", "CLEAR_BOND_DEV_COMPLETE", "GET_BOND_DEV_COMPLETE", "READ_RSSI_COMPLETE", "UPDATE_WHITELIST_COMPLETE"};
@@ -322,7 +324,7 @@ static void handle_bt_device_result(struct disc_res_param *disc_res)
                 }
                 if (data && len) {
                     name = data;
-                    name_len = len;
+                    name_len = (len > 248) ? 248 : len;
                     GAP_DBG_PRINTF(", NAME: ");
                     for (int x = 0; x < len; x++) {
                         GAP_DBG_PRINTF("%c", (char)data[x]);
@@ -367,6 +369,7 @@ static void handle_ble_device_result(struct ble_scan_result_evt_param *scan_rst)
     }
 
     if (adv_name != NULL && adv_name_len) {
+        if (adv_name_len >= sizeof(name)) adv_name_len = sizeof(name) - 1;
         memcpy(name, adv_name, adv_name_len);
         name[adv_name_len] = 0;
     }
@@ -800,6 +803,16 @@ esp_err_t esp_hid_gap_init(uint8_t mode)
         return ESP_FAIL;
     }
 
+    scan_mutex = xSemaphoreCreateMutex();
+    if (scan_mutex == NULL) {
+        ESP_LOGE(TAG, "xSemaphoreCreateMutex failed!");
+        vSemaphoreDelete(bt_hidh_cb_semaphore);
+        bt_hidh_cb_semaphore = NULL;
+        vSemaphoreDelete(ble_hidh_cb_semaphore);
+        ble_hidh_cb_semaphore = NULL;
+        return ESP_FAIL;
+    }
+
     ret = init_low_level(mode);
     if (ret != ESP_OK) {
         vSemaphoreDelete(bt_hidh_cb_semaphore);
@@ -814,8 +827,14 @@ esp_err_t esp_hid_gap_init(uint8_t mode)
 
 esp_err_t esp_hid_scan(uint32_t seconds, size_t *num_results, esp_hid_scan_result_t **results)
 {
+    if (xSemaphoreTake(scan_mutex, 0) != pdTRUE) {
+        ESP_LOGE(TAG, "Scan already in progress");
+        return ESP_FAIL;
+    }
+
     if (num_bt_scan_results || bt_scan_results || num_ble_scan_results || ble_scan_results) {
         ESP_LOGE(TAG, "There are old scan results. Free them first!");
+        xSemaphoreGive(scan_mutex);
         return ESP_FAIL;
     }
 
@@ -823,6 +842,7 @@ esp_err_t esp_hid_scan(uint32_t seconds, size_t *num_results, esp_hid_scan_resul
     if (start_ble_scan(seconds) == ESP_OK) {
         WAIT_BLE_CB();
     } else {
+        xSemaphoreGive(scan_mutex);
         return ESP_FAIL;
     }
 #endif /* CONFIG_BT_BLE_ENABLED */
@@ -831,17 +851,19 @@ esp_err_t esp_hid_scan(uint32_t seconds, size_t *num_results, esp_hid_scan_resul
     if (start_bt_scan(seconds) == ESP_OK) {
         WAIT_BT_CB();
     } else {
+        xSemaphoreGive(scan_mutex);
         return ESP_FAIL;
     }
 #endif
 
     *num_results = num_bt_scan_results + num_ble_scan_results;
     *results = bt_scan_results;
-    if (num_bt_scan_results) {
-        while (bt_scan_results->next != NULL) {
-            bt_scan_results = bt_scan_results->next;
+    if (num_bt_scan_results && bt_scan_results != NULL) {
+        esp_hid_scan_result_t *tail = bt_scan_results;
+        while (tail->next != NULL) {
+            tail = tail->next;
         }
-        bt_scan_results->next = ble_scan_results;
+        tail->next = ble_scan_results;
     } else {
         *results = ble_scan_results;
     }
@@ -850,5 +872,6 @@ esp_err_t esp_hid_scan(uint32_t seconds, size_t *num_results, esp_hid_scan_resul
     bt_scan_results = NULL;
     num_ble_scan_results = 0;
     ble_scan_results = NULL;
+    xSemaphoreGive(scan_mutex);
     return ESP_OK;
 }
