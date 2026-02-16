@@ -11,7 +11,7 @@ configurable at runtime through a WiFi web interface. No reflashing needed.
 ## Features
 
 - **USB, Bluetooth Classic, and BLE** keyboard support (all simultaneously)
-- **Web configuration interface** via WiFi access point
+- **Web configuration interface** via WiFi (AP or station mode with mDNS)
 - **Editable key mappings** — customize escape sequences for any terminal
 - **Built-in presets** for Wyse 50+, VT100, and ADM-3A
 - **Live key monitor** — watch characters as they're sent to the terminal
@@ -27,8 +27,8 @@ configurable at runtime through a WiFi web interface. No reflashing needed.
 USB Keyboard ──────>│                                 │
                     │           ESP32-S3               │
 BT Keyboard ·····>│                                 ├──> 74HCT245 ──> Terminal
-                    │  WiFi AP: "KeyBridge"           │    (3.3V→5V)    DIN port
-BLE Keyboard ····>│  Config:  http://192.168.4.1    │
+                    │  WiFi AP or STA mode            │    (3.3V→5V)    DIN port
+BLE Keyboard ····>│  Config:  http://keybridge.local │
                     │                                 │
                     │  [PAIR btn]  [MODE jumper]       │
                     └─────────────────────────────────┘
@@ -157,10 +157,18 @@ pio device monitor
 
 ### Connecting
 
+**First boot (AP mode)**:
+
 1. Power up the adapter
 2. On your phone/laptop, connect to WiFi network **"KeyBridge"**
    (default password: **terminal50**)
-3. Open a browser and go to **http://192.168.4.1**
+3. Open a browser and go to **http://keybridge.local**
+
+**After configuring Station mode**:
+
+1. The adapter joins your local WiFi network automatically on boot
+2. Browse to **http://keybridge.local** from any device on the same network
+3. If the configured network is unavailable, the adapter falls back to AP mode
 
 The web UI has six tabs:
 
@@ -187,7 +195,9 @@ The web UI has six tabs:
 - **Presets**: One-click load for Wyse 50+, VT100, or ADM-3A
 
 ### WiFi Tab
-- Access point SSID, password, and channel
+- Current status: WiFi mode, IP address, mDNS hostname
+- Station mode: SSID, password, and hostname for joining a local network
+- Access point settings: SSID, password, and channel (fallback)
 - Changes take effect after reboot
 
 ### Monitor Tab
@@ -245,8 +255,10 @@ Common sequence formats:
 
 ## Troubleshooting
 
-**Can't connect to WiFi AP**: Default SSID is "KeyBridge", password
-"terminal50". If you changed these and forgot, do a factory reset by
+**Can't connect to WiFi**: In AP mode, the default SSID is "KeyBridge",
+password "terminal50". In STA mode, if the adapter can't reach the
+configured network it falls back to AP mode after 15 seconds. If you
+changed the AP credentials and forgot them, do a factory reset by
 erasing NVS (hold BOOT button during flash, or reflash firmware).
 
 **No response from terminal**: Check DIN pinout, strobe polarity (try
