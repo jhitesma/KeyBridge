@@ -71,12 +71,12 @@ td input[type=number]{width:50px}
 </div>
 
 <div class="tabs">
-  <button class="tab active" onclick="showTab('general')">General</button>
-  <button class="tab" onclick="showTab('pins')">Pins</button>
-  <button class="tab" onclick="showTab('timing')">Timing</button>
-  <button class="tab" onclick="showTab('keys')">Key Mappings</button>
-  <button class="tab" onclick="showTab('wifi')">WiFi</button>
-  <button class="tab" onclick="showTab('monitor')">Monitor</button>
+  <button class="tab active" onclick="showTab('general',event)">General</button>
+  <button class="tab" onclick="showTab('pins',event)">Pins</button>
+  <button class="tab" onclick="showTab('timing',event)">Timing</button>
+  <button class="tab" onclick="showTab('keys',event)">Key Mappings</button>
+  <button class="tab" onclick="showTab('wifi',event)">WiFi</button>
+  <button class="tab" onclick="showTab('monitor',event)">Monitor</button>
 </div>
 
 <!-- GENERAL TAB -->
@@ -257,11 +257,11 @@ td input[type=number]{width:50px}
 let cfg = {};
 let logPoll = null;
 
-function showTab(name) {
+function showTab(name, evt) {
   document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
   document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
   document.getElementById('panel-'+name).classList.add('active');
-  event.target.classList.add('active');
+  if (evt && evt.target) evt.target.classList.add('active');
   if (name === 'monitor' && !logPoll) startLogPoll();
   if (name !== 'monitor' && logPoll) { clearInterval(logPoll); logPoll = null; }
 }
@@ -277,6 +277,7 @@ function toast(msg, ok) {
 async function loadConfig() {
   try {
     const r = await fetch('/api/config');
+    if (!r.ok) throw new Error('HTTP ' + r.status);
     cfg = await r.json();
     populateForm();
     updateStatus();
@@ -406,6 +407,11 @@ async function saveAll() {
       headers: {'Content-Type':'application/json'},
       body: JSON.stringify(cfg)
     });
+    if (!r.ok) {
+      const text = await r.text();
+      toast('Save failed: ' + text, false);
+      return;
+    }
     const result = await r.json();
     if (result.ok) {
       toast('Saved! Changes applied.', true);
@@ -421,7 +427,13 @@ async function factoryReset() {
   try {
     await fetch('/api/reset', {method:'POST'});
     toast('Reset complete. Rebooting...', true);
-    setTimeout(() => location.reload(), 3000);
+    setTimeout(async () => {
+      for (let i = 0; i < 20; i++) {
+        try { await fetch('/api/status'); location.reload(); return; }
+        catch(e) { await new Promise(r => setTimeout(r, 500)); }
+      }
+      toast('Device may have changed IP. Reconnect manually.', false);
+    }, 3000);
   } catch(e) { toast('Reset failed', false); }
 }
 
@@ -448,6 +460,7 @@ async function sendTest() {
 async function updateStatus() {
   try {
     const r = await fetch('/api/status');
+    if (!r.ok) return;
     const s = await r.json();
     dot('dotUsb', s.usb_connected);
     dot('dotBt', s.bt_connected);
@@ -463,6 +476,7 @@ function startLogPoll() {
   logPoll = setInterval(async () => {
     try {
       const r = await fetch('/api/log');
+      if (!r.ok) return;
       const data = await r.json();
       if (data.entries && data.entries.length > 0) {
         const log = document.getElementById('keyLog');
@@ -478,7 +492,8 @@ function clearLog() { document.getElementById('keyLog').textContent = ''; }
 // --- Terminal presets ---
 async function loadPreset(name) {
   try {
-    const r = await fetch('/api/preset/' + name);
+    const r = await fetch('/api/preset/' + encodeURIComponent(name));
+    if (!r.ok) throw new Error('HTTP ' + r.status);
     const data = await r.json();
     if (data.special_keys) {
       cfg.special_keys = data.special_keys;
