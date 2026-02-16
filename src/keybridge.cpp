@@ -99,7 +99,9 @@ void submitKeyReport(uint8_t modifiers, const uint8_t *keys) {
     KeyReport report;
     report.modifiers = modifiers;
     memcpy(report.keys, keys, 6);
-    xQueueSend(keyQueue, &report, 0);
+    if (xQueueSend(keyQueue, &report, 0) != pdTRUE) {
+        ESP_LOGW(TAG, "Key queue full, event dropped");
+    }
 }
 
 // ============================================================
@@ -249,6 +251,7 @@ void processKeypress(uint8_t keycode, uint8_t modifiers) {
         effective_shift = shift ^ capsLockOn;
     }
 
+    if (keycode >= sizeof(hid_to_ascii_lower)) return;
     uint8_t ascii = effective_shift ? hid_to_ascii_upper[keycode] : hid_to_ascii_lower[keycode];
 
     if (ascii == 0x00) return;
@@ -738,14 +741,24 @@ void startWebServer() {
     // Test character send
     server.on("/api/test", HTTP_POST, []() {
         JsonDocument doc;
-        deserializeJson(doc, server.arg("plain"));
+        if (deserializeJson(doc, server.arg("plain"))) {
+            server.send(400, "application/json", "{\"ok\":false,\"error\":\"Invalid JSON\"}");
+            return;
+        }
         const char *val = doc["char"] | "";
         if (strlen(val) == 1) {
             sendChar((uint8_t)val[0]);
         } else if (strlen(val) == 2) {
-            // Interpret as hex
-            char byte = (char)strtol(val, NULL, 16);
+            char *endptr;
+            long byte = strtol(val, &endptr, 16);
+            if (endptr != val + 2 || byte < 0 || byte > 127) {
+                server.send(400, "application/json", "{\"ok\":false,\"error\":\"Invalid hex (00-7F)\"}");
+                return;
+            }
             sendChar((uint8_t)byte);
+        } else {
+            server.send(400, "application/json", "{\"ok\":false,\"error\":\"Expected 1 char or 2-char hex\"}");
+            return;
         }
         server.send(200, "application/json", "{\"ok\":true}");
     });
