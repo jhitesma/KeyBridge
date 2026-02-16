@@ -1,5 +1,5 @@
 /*
- * web_ui.h — Embedded web interface for the keyboard adapter
+ * web_ui.h — Embedded web interface for KeyBridge
  *
  * Single-page config app served from ESP32 flash.
  * Uses vanilla JS + fetch API, no external dependencies.
@@ -15,7 +15,7 @@ const char WEB_UI_HTML[] PROGMEM = R"rawliteral(
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Wyse Keyboard Adapter</title>
+<title>KeyBridge</title>
 <style>
 :root{--bg:#1a1a2e;--card:#16213e;--accent:#0f3460;--hi:#e94560;--text:#eee;--dim:#888;--ok:#4ecca3;--border:#2a2a4a;--input-bg:#0d1b2a}
 *{box-sizing:border-box;margin:0;padding:0}
@@ -60,7 +60,7 @@ td input[type=number]{width:50px}
 </head>
 <body>
 
-<h1>&#x2328; Wyse Keyboard Adapter</h1>
+<h1>&#x2328; KeyBridge</h1>
 <p class="subtitle">USB / Bluetooth &rarr; Parallel ASCII Terminal Interface</p>
 
 <div class="status-bar" id="statusBar">
@@ -86,7 +86,7 @@ td input[type=number]{width:50px}
     <div class="row">
       <label>Mode</label>
       <select id="ansi_mode">
-        <option value="false">Wyse Native</option>
+        <option value="false">Native</option>
         <option value="true">ANSI / VT100</option>
       </select>
     </div>
@@ -181,7 +181,7 @@ td input[type=number]{width:50px}
     <p class="hint" style="margin-bottom:8px">Define what each special key sends. Sequences are hex-encoded bytes (e.g. "1b5b41" = ESC [ A). Use the readable column as a guide.</p>
     <table>
       <thead>
-        <tr><th>On</th><th>Label</th><th>HID Code</th><th>Wyse Seq (hex)</th><th>Readable</th><th>ANSI Seq (hex)</th><th>Readable</th><th></th></tr>
+        <tr><th>On</th><th>Label</th><th>HID Code</th><th>Native Seq (hex)</th><th>Readable</th><th>ANSI Seq (hex)</th><th>Readable</th><th></th></tr>
       </thead>
       <tbody id="keyTableBody"></tbody>
     </table>
@@ -318,8 +318,8 @@ function keyRow(i, k) {
     <td><input type="checkbox" ${k.enabled?'checked':''} data-i="${i}" data-f="enabled"></td>
     <td><input type="text" value="${esc(k.label)}" data-i="${i}" data-f="label" style="width:70px"></td>
     <td><input type="number" value="${k.keycode}" data-i="${i}" data-f="keycode" style="width:50px" class="mono"></td>
-    <td><input type="text" value="${esc(k.wyse_hex)}" data-i="${i}" data-f="wyse_hex" class="mono" style="width:90px"></td>
-    <td class="mono" style="color:var(--ok)">${esc(k.wyse_display||'')}</td>
+    <td><input type="text" value="${esc(k.native_hex)}" data-i="${i}" data-f="native_hex" class="mono" style="width:90px"></td>
+    <td class="mono" style="color:var(--ok)">${esc(k.native_display||'')}</td>
     <td><input type="text" value="${esc(k.ansi_hex)}" data-i="${i}" data-f="ansi_hex" class="mono" style="width:90px"></td>
     <td class="mono" style="color:var(--ok)">${esc(k.ansi_display||'')}</td>
     <td><button class="btn-danger btn-sm" onclick="delKeyRow(${i})">&#x2716;</button></td>
@@ -328,7 +328,7 @@ function keyRow(i, k) {
 
 function addKeyRow() {
   if (!cfg.special_keys) cfg.special_keys = [];
-  cfg.special_keys.push({keycode:0,label:'',wyse_hex:'',ansi_hex:'',wyse_display:'',ansi_display:'',enabled:true});
+  cfg.special_keys.push({keycode:0,label:'',native_hex:'',ansi_hex:'',native_display:'',ansi_display:'',enabled:true});
   populateKeyTable();
 }
 
@@ -432,7 +432,7 @@ async function updateStatus() {
     dot('dotUsb', s.usb_connected);
     dot('dotBt', s.bt_connected);
     dot('dotWifi', true);
-    document.getElementById('modeLabel').textContent = s.ansi_mode ? 'ANSI' : 'Wyse';
+    document.getElementById('modeLabel').textContent = s.ansi_mode ? 'ANSI' : 'Native';
   } catch(e) {}
 }
 

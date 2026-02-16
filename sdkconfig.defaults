@@ -1,0 +1,32 @@
+# KeyBridge — Bluetooth Classic + BLE coexistence for ESP32-S3
+#
+# These settings are compiled into ESP-IDF when using the combined
+# arduino+espidf framework. They replace the -DCONFIG_BT_* build
+# flags that had no effect under the Arduino-only framework.
+
+# Bluetooth controller: dual mode (Classic + BLE)
+CONFIG_BT_ENABLED=y
+CONFIG_BT_CTRL_MODE_EFF=3
+CONFIG_BT_BLUEDROID_ENABLED=y
+
+# Classic BT
+CONFIG_BT_CLASSIC_ENABLED=y
+CONFIG_BT_BLE_ENABLED=y
+CONFIG_BT_HID_HOST_ENABLED=y
+CONFIG_BTDM_CTRL_BR_EDR_MAX_ACL_CONN=3
+
+# WiFi + BT coexistence
+CONFIG_ESP_COEX_SW_COEXIST_ENABLE=y
+
+# Stack size for app_main (Arduino setup/loop)
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192
+
+# BLE: use 4.2 scan APIs (required by esp_hid_gap.c)
+CONFIG_BT_BLE_42_FEATURES_SUPPORTED=y
+# CONFIG_BT_BLE_50_FEATURES_SUPPORTED is not set
+
+# Flash size (match the 8MB board)
+CONFIG_ESPTOOLPY_FLASHSIZE_8MB=y
+
+# Required by Arduino framework
+CONFIG_FREERTOS_HZ=1000

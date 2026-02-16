@@ -1,4 +1,4 @@
-# Wyse 50+ USB / Bluetooth Keyboard Adapter  v4.0
+# KeyBridge — USB / Bluetooth to Parallel Terminal Adapter
 
 Universal parallel ASCII keyboard adapter with a **web-based configuration
 interface**. Connects modern USB or Bluetooth keyboards to vintage terminals
@@ -16,7 +16,7 @@ configurable at runtime through a WiFi web interface. No reflashing needed.
 - **Built-in presets** for Wyse 50+, VT100, and ADM-3A
 - **Live key monitor** — watch characters as they're sent to the terminal
 - **Test mode** — send individual characters from the web UI
-- **Hardware controls** — PAIR button for Bluetooth, MODE jumper for Wyse/ANSI
+- **Hardware controls** — PAIR button for Bluetooth, MODE jumper for Native/ANSI
 - **Persistent settings** — saved to flash, survives power cycles
 - **Factory reset** — via web UI or by erasing NVS
 
@@ -27,7 +27,7 @@ configurable at runtime through a WiFi web interface. No reflashing needed.
 USB Keyboard ──────>│                                 │
                     │           ESP32-S3               │
 BT Keyboard ·····>│                                 ├──> 74HCT245 ──> Terminal
-                    │  WiFi AP: "Wyse-Adapter"        │    (3.3V→5V)    DIN port
+                    │  WiFi AP: "KeyBridge"           │    (3.3V→5V)    DIN port
 BLE Keyboard ····>│  Config:  http://192.168.4.1    │
                     │                                 │
                     │  [PAIR btn]  [MODE jumper]       │
@@ -44,7 +44,7 @@ BLE Keyboard ····>│  Config:  http://192.168.4.1    │
 | 0.1µF ceramic capacitor     | 1   | Decoupling for 74HCT245               |
 | DIN connector                | 1   | Match your terminal's keyboard port    |
 | Momentary pushbutton         | 1   | BT PAIR button (normally open)         |
-| 2-pin header + jumper shunt  | 1   | MODE select (Wyse/ANSI)               |
+| 2-pin header + jumper shunt  | 1   | MODE select (Native/ANSI)             |
 | LED + 330Ω resistor          | 1-2 | Optional: activity + BT status         |
 
 **Total: ~$12-18**
@@ -114,7 +114,7 @@ Press to scan for Bluetooth keyboards.
 GPIO 38 ────┤ Jumper ├──── GND
 ```
 
-Open = Wyse native, Closed = ANSI/VT100. Readable at runtime.
+Open = Native, Closed = ANSI/VT100. Readable at runtime.
 Can also be set via the web interface (disable "use hardware jumper"
 to control mode purely in software).
 
@@ -139,7 +139,7 @@ Expected signals: D0-D6 (7 data), Strobe (active-low), +5V, GND.
 
 ```bash
 pip install platformio
-cd wyse_usb_keyboard
+cd KeyBridge
 pio run -t upload
 pio device monitor
 ```
@@ -158,14 +158,14 @@ pio device monitor
 ### Connecting
 
 1. Power up the adapter
-2. On your phone/laptop, connect to WiFi network **"Wyse-Adapter"**
+2. On your phone/laptop, connect to WiFi network **"KeyBridge"**
    (default password: **terminal50**)
 3. Open a browser and go to **http://192.168.4.1**
 
 The web UI has six tabs:
 
 ### General Tab
-- Terminal mode (Wyse/ANSI) and hardware jumper enable
+- Terminal mode (Native/ANSI) and hardware jumper enable
 - Strobe polarity
 - Feature toggles (USB, BT Classic, BLE, WiFi)
 - Bluetooth pairing button
@@ -181,7 +181,7 @@ The web UI has six tabs:
 
 ### Key Mappings Tab
 - Full table of special key definitions
-- Each row: HID scancode, label, Wyse sequence, ANSI sequence
+- Each row: HID scancode, label, Native sequence, ANSI sequence
 - Sequences shown in hex and human-readable format
 - Add/remove keys, enable/disable individual mappings
 - **Presets**: One-click load for Wyse 50+, VT100, or ADM-3A
@@ -245,7 +245,7 @@ Common sequence formats:
 
 ## Troubleshooting
 
-**Can't connect to WiFi AP**: Default SSID is "Wyse-Adapter", password
+**Can't connect to WiFi AP**: Default SSID is "KeyBridge", password
 "terminal50". If you changed these and forgot, do a factory reset by
 erasing NVS (hold BOOT button during flash, or reflash firmware).
 
@@ -276,7 +276,7 @@ Three ways to reset to defaults:
 
 | File                    | Purpose                                  |
 |-------------------------|------------------------------------------|
-| `wyse_usb_keyboard.ino` | Main firmware (USB, BT, web server)     |
-| `config.h`              | Config structure, NVS storage, JSON API  |
-| `web_ui.h`              | Embedded HTML/CSS/JS web interface       |
+| `src/keybridge.cpp`     | Main firmware (USB, BT, web server)     |
+| `src/config.h`          | Config structure, NVS storage, JSON API  |
+| `src/web_ui.h`          | Embedded HTML/CSS/JS web interface       |
 | `platformio.ini`        | Build configuration                      |

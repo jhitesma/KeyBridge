@@ -24,7 +24,7 @@ PlatformIO is used via the VS Code extension. CLI install is optional (`brew ins
 
 Three-file design:
 
-- **`wyse_usb_keyboard.ino`** — Main firmware: USB host stack, Bluetooth HID (Classic + BLE), WiFi AP with web server, GPIO parallel output, HID report processing, key repeat, FreeRTOS tasks
+- **`keybridge.cpp`** — Main firmware: USB host stack, Bluetooth HID (Classic + BLE), WiFi AP with web server, GPIO parallel output, HID report processing, key repeat, FreeRTOS tasks
 - **`config.h`** — `AdapterConfig` struct, NVS persistence (`Preferences` library), JSON serialization/deserialization for the web API
 - **`web_ui.h`** — Complete single-page web UI embedded as a PROGMEM raw string literal (HTML/CSS/JS, ~480 lines)
 
@@ -85,7 +85,7 @@ The ESP32 runs a WiFi AP with a web server exposing these endpoints:
 clang-format is configured (`.clang-format` in project root). To format source files:
 
 ```bash
-clang-format -i wyse_usb_keyboard.ino config.h
+clang-format -i src/keybridge.cpp src/config.h
 ```
 
-Do not format `web_ui.h` directly — the clang-format guards handle it, but it's safer to format only the files that need it.
+Do not format `src/web_ui.h` directly — the clang-format guards handle it, but it's safer to format only the files that need it.

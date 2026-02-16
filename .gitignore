@@ -14,6 +14,10 @@
 *.hex
 *.map
 
+# ESP-IDF build artifacts (combined framework)
+sdkconfig.esp32s3
+managed_components/
+
 # OS files
 .DS_Store
 
