@@ -191,12 +191,12 @@ void sendString(const char *str) {
 // ============================================================
 
 static const uint8_t hid_to_ascii_lower[104] = {
-    0x00, 0x00, 0x00, 0x00,   'a',  'b',  'c',  'd',  'e',  'f',  'g',  'h',  'i',  'j',  'k',  'l',  'm',  'n',
-    'o',  'p',  'q',  'r',    's',  't',  'u',  'v',  'w',  'x',  'y',  'z',  '1',  '2',  '3',  '4',  '5',  '6',
-    '7',  '8',  '9',  '0',    0x0D, 0x1B, 0x08, 0x09, 0x20, '-',  '=',  '[',  ']',  '\\', 0x00, ';',  '\'', '`',
+    0x00, 0x00, 0x00, 0x00, 'a',  'b',  'c',  'd',  'e',  'f',  'g',  'h',  'i',  'j',  'k',  'l',  'm',  'n',
+    'o',  'p',  'q',  'r',  's',  't',  'u',  'v',  'w',  'x',  'y',  'z',  '1',  '2',  '3',  '4',  '5',  '6',
+    '7',  '8',  '9',  '0',  0x0D, 0x1B, 0x08, 0x09, 0x20, '-',  '=',  '[',  ']',  '\\', 0x00, ';',  '\'', '`',
     ',',  '.',  '/',  0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x00, 0x00, 0x00, 0x00,   0x7F, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, '/',  '*',  '-',  '+',  0x0D, '1',
-    '2',  '3',  '4',  '5',    '6',  '7',  '8',  '9',  '0',  '.',  0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x7F, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, '/',  '*',  '-',  '+',  0x0D, '1',
+    '2',  '3',  '4',  '5',  '6',  '7',  '8',  '9',  '0',  '.',  0x00, 0x00, 0x00, 0x00,
 };
 
 static const uint8_t hid_to_ascii_upper[104] = {
@@ -409,10 +409,8 @@ static void usb_set_boot_protocol(usb_device_handle_t dev, uint8_t iface) {
     ctrl->device_handle    = dev;
     ctrl->bEndpointAddress = 0x00;
     SemaphoreHandle_t done = xSemaphoreCreateBinary();
-    ctrl->callback         = [](usb_transfer_t *t) {
-        xSemaphoreGiveFromISR((SemaphoreHandle_t)t->context, NULL);
-    };
-    ctrl->context = (void *)done;
+    ctrl->callback         = [](usb_transfer_t *t) { xSemaphoreGiveFromISR((SemaphoreHandle_t)t->context, NULL); };
+    ctrl->context          = (void *)done;
     usb_host_transfer_submit_control(usb_client_hdl, ctrl);
     xSemaphoreTake(done, pdMS_TO_TICKS(500));
     vSemaphoreDelete(done);

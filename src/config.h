@@ -67,9 +67,9 @@ struct AdapterConfig {
     uint8_t wifi_channel;
 
     // --- WiFi STA ---
-    char sta_ssid[33];      // STA network SSID (empty = AP-only)
-    char sta_password[65];  // STA network password
-    char hostname[33];      // mDNS hostname (default "keybridge")
+    char sta_ssid[33];     // STA network SSID (empty = AP-only)
+    char sta_password[65]; // STA network password
+    char hostname[33];     // mDNS hostname (default "keybridge")
 
     // --- Special key mappings ---
     uint8_t num_special_keys;
@@ -119,7 +119,7 @@ static void setDefaultConfig(AdapterConfig &cfg) {
     cfg.wifi_channel = 6;
 
     // WiFi STA (empty = AP-only on first boot)
-    cfg.sta_ssid[0] = '\0';
+    cfg.sta_ssid[0]     = '\0';
     cfg.sta_password[0] = '\0';
     strlcpy(cfg.hostname, "keybridge", sizeof(cfg.hostname));
 
@@ -244,15 +244,15 @@ bool loadConfig(AdapterConfig &cfg) {
     if (readLen != sizeof(cfg)) return false;
 
     // Ensure string fields are null-terminated after blob load
-    cfg.wifi_ssid[sizeof(cfg.wifi_ssid) - 1] = '\0';
+    cfg.wifi_ssid[sizeof(cfg.wifi_ssid) - 1]         = '\0';
     cfg.wifi_password[sizeof(cfg.wifi_password) - 1] = '\0';
-    cfg.sta_ssid[sizeof(cfg.sta_ssid) - 1] = '\0';
-    cfg.sta_password[sizeof(cfg.sta_password) - 1] = '\0';
-    cfg.hostname[sizeof(cfg.hostname) - 1] = '\0';
+    cfg.sta_ssid[sizeof(cfg.sta_ssid) - 1]           = '\0';
+    cfg.sta_password[sizeof(cfg.sta_password) - 1]   = '\0';
+    cfg.hostname[sizeof(cfg.hostname) - 1]           = '\0';
     for (int i = 0; i < MAX_SPECIAL_KEYS; i++) {
-        cfg.special_keys[i].label[sizeof(cfg.special_keys[i].label) - 1] = '\0';
+        cfg.special_keys[i].label[sizeof(cfg.special_keys[i].label) - 1]           = '\0';
         cfg.special_keys[i].seq_native[sizeof(cfg.special_keys[i].seq_native) - 1] = '\0';
-        cfg.special_keys[i].seq_ansi[sizeof(cfg.special_keys[i].seq_ansi) - 1] = '\0';
+        cfg.special_keys[i].seq_ansi[sizeof(cfg.special_keys[i].seq_ansi) - 1]     = '\0';
     }
 
     // Clamp num_special_keys to valid range
@@ -359,27 +359,27 @@ String configToJson(const AdapterConfig &cfg) {
     features["wifi"]       = cfg.enable_wifi;
 
     // WiFi
-    JsonObject wifi     = doc["wifi"].to<JsonObject>();
-    wifi["ap_ssid"]     = cfg.wifi_ssid;
-    wifi["ap_password"] = cfg.wifi_password;
-    wifi["ap_channel"]  = cfg.wifi_channel;
-    wifi["sta_ssid"]    = cfg.sta_ssid;
+    JsonObject wifi      = doc["wifi"].to<JsonObject>();
+    wifi["ap_ssid"]      = cfg.wifi_ssid;
+    wifi["ap_password"]  = cfg.wifi_password;
+    wifi["ap_channel"]   = cfg.wifi_channel;
+    wifi["sta_ssid"]     = cfg.sta_ssid;
     wifi["sta_password"] = cfg.sta_password;
-    wifi["hostname"]    = cfg.hostname;
+    wifi["hostname"]     = cfg.hostname;
 
     // Special keys
     JsonArray keys = doc["special_keys"].to<JsonArray>();
-    int count = (cfg.num_special_keys <= MAX_SPECIAL_KEYS) ? cfg.num_special_keys : MAX_SPECIAL_KEYS;
+    int count      = (cfg.num_special_keys <= MAX_SPECIAL_KEYS) ? cfg.num_special_keys : MAX_SPECIAL_KEYS;
     for (int i = 0; i < count; i++) {
         if (!cfg.special_keys[i].enabled && cfg.special_keys[i].hid_keycode == 0) continue;
-        JsonObject k      = keys.add<JsonObject>();
-        k["keycode"]      = cfg.special_keys[i].hid_keycode;
-        k["label"]        = cfg.special_keys[i].label;
+        JsonObject k        = keys.add<JsonObject>();
+        k["keycode"]        = cfg.special_keys[i].hid_keycode;
+        k["label"]          = cfg.special_keys[i].label;
         k["native_hex"]     = seqToHex(cfg.special_keys[i].seq_native);
-        k["ansi_hex"]     = seqToHex(cfg.special_keys[i].seq_ansi);
+        k["ansi_hex"]       = seqToHex(cfg.special_keys[i].seq_ansi);
         k["native_display"] = seqToReadable(cfg.special_keys[i].seq_native);
-        k["ansi_display"] = seqToReadable(cfg.special_keys[i].seq_ansi);
-        k["enabled"]      = cfg.special_keys[i].enabled;
+        k["ansi_display"]   = seqToReadable(cfg.special_keys[i].seq_ansi);
+        k["enabled"]        = cfg.special_keys[i].enabled;
     }
 
     String output;
@@ -402,18 +402,54 @@ bool jsonToConfig(const String &json, AdapterConfig &cfg) {
     // Pins
     if (doc.containsKey("pins")) {
         JsonObject pins = doc["pins"];
-        if (pins.containsKey("d0")) { int8_t v = pins["d0"]; if (isValidGPIO(v)) cfg.pin_d0 = v; }
-        if (pins.containsKey("d1")) { int8_t v = pins["d1"]; if (isValidGPIO(v)) cfg.pin_d1 = v; }
-        if (pins.containsKey("d2")) { int8_t v = pins["d2"]; if (isValidGPIO(v)) cfg.pin_d2 = v; }
-        if (pins.containsKey("d3")) { int8_t v = pins["d3"]; if (isValidGPIO(v)) cfg.pin_d3 = v; }
-        if (pins.containsKey("d4")) { int8_t v = pins["d4"]; if (isValidGPIO(v)) cfg.pin_d4 = v; }
-        if (pins.containsKey("d5")) { int8_t v = pins["d5"]; if (isValidGPIO(v)) cfg.pin_d5 = v; }
-        if (pins.containsKey("d6")) { int8_t v = pins["d6"]; if (isValidGPIO(v)) cfg.pin_d6 = v; }
-        if (pins.containsKey("strobe")) { int8_t v = pins["strobe"]; if (isValidGPIO(v)) cfg.pin_strobe = v; }
-        if (pins.containsKey("pair_btn")) { int8_t v = pins["pair_btn"]; if (isValidGPIO(v)) cfg.pin_pair_btn = v; }
-        if (pins.containsKey("mode_jp")) { int8_t v = pins["mode_jp"]; if (isValidGPIO(v)) cfg.pin_mode_jp = v; }
-        if (pins.containsKey("led")) { int8_t v = pins["led"]; if (isValidGPIO(v)) cfg.pin_led = v; }
-        if (pins.containsKey("bt_led")) { int8_t v = pins["bt_led"]; if (isValidGPIO(v)) cfg.pin_bt_led = v; }
+        if (pins.containsKey("d0")) {
+            int8_t v = pins["d0"];
+            if (isValidGPIO(v)) cfg.pin_d0 = v;
+        }
+        if (pins.containsKey("d1")) {
+            int8_t v = pins["d1"];
+            if (isValidGPIO(v)) cfg.pin_d1 = v;
+        }
+        if (pins.containsKey("d2")) {
+            int8_t v = pins["d2"];
+            if (isValidGPIO(v)) cfg.pin_d2 = v;
+        }
+        if (pins.containsKey("d3")) {
+            int8_t v = pins["d3"];
+            if (isValidGPIO(v)) cfg.pin_d3 = v;
+        }
+        if (pins.containsKey("d4")) {
+            int8_t v = pins["d4"];
+            if (isValidGPIO(v)) cfg.pin_d4 = v;
+        }
+        if (pins.containsKey("d5")) {
+            int8_t v = pins["d5"];
+            if (isValidGPIO(v)) cfg.pin_d5 = v;
+        }
+        if (pins.containsKey("d6")) {
+            int8_t v = pins["d6"];
+            if (isValidGPIO(v)) cfg.pin_d6 = v;
+        }
+        if (pins.containsKey("strobe")) {
+            int8_t v = pins["strobe"];
+            if (isValidGPIO(v)) cfg.pin_strobe = v;
+        }
+        if (pins.containsKey("pair_btn")) {
+            int8_t v = pins["pair_btn"];
+            if (isValidGPIO(v)) cfg.pin_pair_btn = v;
+        }
+        if (pins.containsKey("mode_jp")) {
+            int8_t v = pins["mode_jp"];
+            if (isValidGPIO(v)) cfg.pin_mode_jp = v;
+        }
+        if (pins.containsKey("led")) {
+            int8_t v = pins["led"];
+            if (isValidGPIO(v)) cfg.pin_led = v;
+        }
+        if (pins.containsKey("bt_led")) {
+            int8_t v = pins["bt_led"];
+            if (isValidGPIO(v)) cfg.pin_bt_led = v;
+        }
     }
 
     // Terminal
@@ -427,11 +463,26 @@ bool jsonToConfig(const String &json, AdapterConfig &cfg) {
     // Timing
     if (doc.containsKey("timing")) {
         JsonObject t = doc["timing"];
-        if (t.containsKey("strobe_pulse_us")) { uint16_t v = t["strobe_pulse_us"]; if (v >= 1 && v <= 1000) cfg.strobe_pulse_us = v; }
-        if (t.containsKey("data_setup_us")) { uint16_t v = t["data_setup_us"]; if (v >= 1 && v <= 100) cfg.data_setup_us = v; }
-        if (t.containsKey("inter_char_delay_us")) { uint16_t v = t["inter_char_delay_us"]; if (v <= 10000) cfg.inter_char_delay_us = v; }
-        if (t.containsKey("repeat_delay_ms")) { uint16_t v = t["repeat_delay_ms"]; if (v >= 50 && v <= 5000) cfg.repeat_delay_ms = v; }
-        if (t.containsKey("repeat_rate_ms")) { uint16_t v = t["repeat_rate_ms"]; if (v >= 10 && v <= 1000) cfg.repeat_rate_ms = v; }
+        if (t.containsKey("strobe_pulse_us")) {
+            uint16_t v = t["strobe_pulse_us"];
+            if (v >= 1 && v <= 1000) cfg.strobe_pulse_us = v;
+        }
+        if (t.containsKey("data_setup_us")) {
+            uint16_t v = t["data_setup_us"];
+            if (v >= 1 && v <= 100) cfg.data_setup_us = v;
+        }
+        if (t.containsKey("inter_char_delay_us")) {
+            uint16_t v = t["inter_char_delay_us"];
+            if (v <= 10000) cfg.inter_char_delay_us = v;
+        }
+        if (t.containsKey("repeat_delay_ms")) {
+            uint16_t v = t["repeat_delay_ms"];
+            if (v >= 50 && v <= 5000) cfg.repeat_delay_ms = v;
+        }
+        if (t.containsKey("repeat_rate_ms")) {
+            uint16_t v = t["repeat_rate_ms"];
+            if (v >= 10 && v <= 1000) cfg.repeat_rate_ms = v;
+        }
     }
 
     // Features
