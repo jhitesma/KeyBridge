@@ -351,13 +351,18 @@ void handleAutoRepeat() {
 static usb_host_client_handle_t usb_client_hdl = NULL;
 static usb_device_handle_t usb_dev_hdl         = NULL;
 static usb_transfer_t *usb_xfer_in             = NULL;
+static uint8_t usb_claimed_iface               = 0xFF;
 static SemaphoreHandle_t usb_device_sem        = NULL;
 
 static void usb_transfer_cb(usb_transfer_t *transfer) {
     if (transfer->status == USB_TRANSFER_STATUS_COMPLETED && transfer->actual_num_bytes >= 8) {
         submitKeyReport(transfer->data_buffer[0], &transfer->data_buffer[2]);
     }
-    if (usb_keyboard_connected) usb_host_transfer_submit(transfer);
+    if (usb_keyboard_connected && usb_dev_hdl != NULL) {
+        if (usb_host_transfer_submit(transfer) != ESP_OK) {
+            usb_keyboard_connected = false;
+        }
+    }
 }
 
 static void usb_client_event_cb(const usb_host_client_event_msg_t *msg, void *arg) {
@@ -367,7 +372,15 @@ static void usb_client_event_cb(const usb_host_client_event_msg_t *msg, void *ar
             break;
         case USB_HOST_CLIENT_EVENT_DEV_GONE:
             usb_keyboard_connected = false;
+            if (usb_xfer_in) {
+                usb_host_transfer_free(usb_xfer_in);
+                usb_xfer_in = NULL;
+            }
             if (usb_dev_hdl) {
+                if (usb_claimed_iface != 0xFF) {
+                    usb_host_interface_release(usb_client_hdl, usb_dev_hdl, usb_claimed_iface);
+                    usb_claimed_iface = 0xFF;
+                }
                 usb_host_device_close(usb_client_hdl, usb_dev_hdl);
                 usb_dev_hdl = NULL;
             }
@@ -392,12 +405,14 @@ static void usb_set_boot_protocol(usb_device_handle_t dev, uint8_t iface) {
     ctrl->data_buffer[7]   = 0x00;
     ctrl->device_handle    = dev;
     ctrl->bEndpointAddress = 0x00;
-    volatile bool done     = false;
-    ctrl->callback         = [](usb_transfer_t *t) { *(volatile bool *)t->context = true; };
-    ctrl->context          = (void *)&done;
+    SemaphoreHandle_t done = xSemaphoreCreateBinary();
+    ctrl->callback         = [](usb_transfer_t *t) {
+        xSemaphoreGiveFromISR((SemaphoreHandle_t)t->context, NULL);
+    };
+    ctrl->context = (void *)done;
     usb_host_transfer_submit_control(usb_client_hdl, ctrl);
-    for (int i = 0; i < 50 && !done; i++)
-        vTaskDelay(pdMS_TO_TICKS(10));
+    xSemaphoreTake(done, pdMS_TO_TICKS(500));
+    vSemaphoreDelete(done);
     usb_host_transfer_free(ctrl);
 }
 
@@ -427,14 +442,16 @@ static void usb_keyboard_task(void *arg) {
             bool in_kbd = false, connected = false;
 
             while (off < total && !connected) {
+                if (off + 1 >= total) break;
                 uint8_t dlen = p[off], dtype = p[off + 1];
-                if (dlen == 0) break;
+                if (dlen < 2 || off + dlen > total) break;
                 if (dtype == 0x04 && dlen >= 9) {
                     iface  = p[off + 2];
                     in_kbd = (p[off + 5] == 3 && p[off + 6] == 1 && p[off + 7] == 1);
                 }
                 if (dtype == 0x05 && in_kbd && dlen >= 7 && (p[off + 2] & 0x80)) {
                     if (usb_host_interface_claim(usb_client_hdl, usb_dev_hdl, iface, 0) != ESP_OK) break;
+                    usb_claimed_iface = iface;
                     usb_set_boot_protocol(usb_dev_hdl, iface);
                     usb_host_transfer_alloc(64, 0, &usb_xfer_in);
                     usb_xfer_in->device_handle    = usb_dev_hdl;
