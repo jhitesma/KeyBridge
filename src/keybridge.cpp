@@ -22,6 +22,7 @@
 #include <WiFi.h>
 #include <WebServer.h>
 #include <ArduinoJson.h>
+#include <mdns.h>
 
 // USB Host
 #include "usb/usb_host.h"
@@ -64,6 +65,7 @@ static QueueHandle_t keyQueue = NULL; // Shared key event queue
 // Status flags (read by web API)
 static volatile bool usb_keyboard_connected = false;
 static volatile bool bt_keyboard_connected  = false;
+static bool wifi_sta_mode                   = false;
 
 // Key log ring buffer for the monitor tab
 #define KEY_LOG_SIZE 64
@@ -585,14 +587,63 @@ void startBluetooth() {
 //  WEB SERVER + REST API
 // ############################################################
 
-void startWebServer() {
+bool connectSta() {
+    if (config.sta_ssid[0] == '\0') return false;
+
+    ESP_LOGI(TAG, "[WiFi] Connecting to STA network: %s", config.sta_ssid);
+    logKey("[WiFi] Connecting to %s...", config.sta_ssid);
+
+    WiFi.setHostname(config.hostname);
+    WiFi.mode(WIFI_STA);
+    WiFi.begin(config.sta_ssid, config.sta_password);
+
+    for (int i = 0; i < 150; i++) { // 15 seconds (150 * 100ms)
+        wl_status_t status = WiFi.status();
+        if (status == WL_CONNECTED) return true;
+        if (status == WL_NO_SSID_AVAIL || status == WL_CONNECT_FAILED) {
+            ESP_LOGW(TAG, "[WiFi] STA failed (status %d)", status);
+            break;
+        }
+        delay(100);
+    }
+
+    ESP_LOGW(TAG, "[WiFi] STA connection timed out");
+    WiFi.disconnect(true);
+    return false;
+}
+
+void startAp() {
     WiFi.mode(WIFI_AP);
     WiFi.softAP(config.wifi_ssid, config.wifi_password, config.wifi_channel);
+}
 
-    IPAddress ip = WiFi.softAPIP();
-    ESP_LOGI(TAG, "[WiFi] AP started: %s", config.wifi_ssid);
-    ESP_LOGI(TAG, "[WiFi] Config URL: http://%s/", ip.toString().c_str());
-    logKey("[WiFi] http://%s/", ip.toString().c_str());
+void startMdns() {
+    if (mdns_init() != ESP_OK) {
+        ESP_LOGW(TAG, "[mDNS] Init failed");
+        return;
+    }
+    mdns_hostname_set(config.hostname);
+    mdns_instance_name_set("KeyBridge Terminal Adapter");
+    mdns_service_add(NULL, "_http", "_tcp", 80, NULL, 0);
+    ESP_LOGI(TAG, "[mDNS] %s.local", config.hostname);
+}
+
+void startWebServer() {
+    if (config.sta_ssid[0] != '\0' && connectSta()) {
+        wifi_sta_mode = true;
+        IPAddress ip  = WiFi.localIP();
+        ESP_LOGI(TAG, "[WiFi] STA connected: %s", ip.toString().c_str());
+        logKey("[WiFi] STA: %s", ip.toString().c_str());
+    } else {
+        startAp();
+        wifi_sta_mode = false;
+        IPAddress ip  = WiFi.softAPIP();
+        ESP_LOGI(TAG, "[WiFi] AP started: %s", config.wifi_ssid);
+        logKey("[WiFi] AP: %s", ip.toString().c_str());
+    }
+
+    startMdns();
+    ESP_LOGI(TAG, "[WiFi] http://%s.local/", config.hostname);
 
     // Serve the web UI
     server.on("/", HTTP_GET, []() { server.send_P(200, "text/html", WEB_UI_HTML); });
@@ -627,6 +678,9 @@ void startWebServer() {
         doc["bt_connected"]  = (bool)bt_keyboard_connected;
         doc["ansi_mode"]     = config.ansi_mode;
         doc["uptime_sec"]    = millis() / 1000;
+        doc["wifi_mode"]     = wifi_sta_mode ? "STA" : "AP";
+        doc["wifi_ip"]       = wifi_sta_mode ? WiFi.localIP().toString() : WiFi.softAPIP().toString();
+        doc["hostname"]      = config.hostname;
         String out;
         serializeJson(doc, out);
         server.send(200, "application/json", out);
@@ -794,14 +848,23 @@ extern "C" void app_main() {
     setupOutputPins();
 
     ESP_LOGI(TAG, "========================================");
-    ESP_LOGI(TAG, " KeyBridge  v4.1");
+    ESP_LOGI(TAG, " KeyBridge  v5.0");
     ESP_LOGI(TAG, " Web-configurable | USB + BT + BLE");
     ESP_LOGI(TAG, "----------------------------------------");
     ESP_LOGI(TAG, " Mode:    %s", config.ansi_mode ? "ANSI/VT100" : "Native");
     ESP_LOGI(TAG, " USB:     %s", config.enable_usb ? "ON" : "off");
     ESP_LOGI(TAG, " BT:      %s", config.enable_bt_classic ? "ON" : "off");
     ESP_LOGI(TAG, " BLE:     %s", config.enable_ble ? "ON" : "off");
-    ESP_LOGI(TAG, " WiFi AP: %s", config.enable_wifi ? config.wifi_ssid : "off");
+    if (config.enable_wifi) {
+        if (config.sta_ssid[0] != '\0') {
+            ESP_LOGI(TAG, " WiFi:    STA>AP (%s, fallback %s)", config.sta_ssid, config.wifi_ssid);
+        } else {
+            ESP_LOGI(TAG, " WiFi:    AP (%s)", config.wifi_ssid);
+        }
+        ESP_LOGI(TAG, " mDNS:    %s.local", config.hostname);
+    } else {
+        ESP_LOGI(TAG, " WiFi:    off");
+    }
     ESP_LOGI(TAG, "========================================");
 
     if (config.enable_wifi) startWebServer();

@@ -203,12 +203,26 @@ td input[type=number]{width:50px}
 <!-- WIFI TAB -->
 <div class="panel" id="panel-wifi">
   <div class="group">
+    <div class="group-title">Current Status</div>
+    <div class="row"><label>WiFi mode</label><strong id="wifiModeLabel">--</strong></div>
+    <div class="row"><label>IP address</label><strong id="wifiIpLabel">--</strong></div>
+    <div class="row"><label>Hostname</label><strong id="wifiHostLabel">--</strong></div>
+  </div>
+  <div class="group">
+    <div class="group-title">Station Mode</div>
+    <p class="hint" style="margin-bottom:8px">Connect to an existing WiFi network. Leave SSID empty for AP-only mode.</p>
+    <div class="row"><label>Network SSID</label><input type="text" id="sta_ssid" maxlength="32"></div>
+    <div class="row"><label>Password</label><input type="text" id="sta_password" maxlength="64"></div>
+    <div class="row"><label>Hostname</label><input type="text" id="hostname" maxlength="32">
+      <span class="hint">.local (mDNS)</span></div>
+  </div>
+  <div class="group">
     <div class="group-title">Access Point Settings</div>
-    <p class="hint" style="margin-bottom:8px">The adapter creates its own WiFi network. Connect to it from your phone or laptop to access this page.</p>
-    <div class="row"><label>Network name (SSID)</label><input type="text" id="wifi_ssid" maxlength="32"></div>
-    <div class="row"><label>Password</label><input type="text" id="wifi_password" maxlength="63">
+    <p class="hint" style="margin-bottom:8px">Fallback when STA not configured or fails to connect.</p>
+    <div class="row"><label>AP name (SSID)</label><input type="text" id="ap_ssid" maxlength="32"></div>
+    <div class="row"><label>AP password</label><input type="text" id="ap_password" maxlength="63">
       <span class="hint">Min 8 chars, or empty for open</span></div>
-    <div class="row"><label>Channel</label><input type="number" id="wifi_channel" min="1" max="13"></div>
+    <div class="row"><label>AP channel</label><input type="number" id="ap_channel" min="1" max="13"></div>
   </div>
   <div class="actions">
     <button class="btn-primary" onclick="saveAll()">&#x1F4BE; Save &amp; Apply</button>
@@ -297,9 +311,12 @@ function populateForm() {
   val('repeat_rate_ms', cfg.timing?.repeat_rate_ms);
 
   // WiFi
-  val('wifi_ssid', cfg.wifi?.ssid);
-  val('wifi_password', cfg.wifi?.password);
-  val('wifi_channel', cfg.wifi?.channel);
+  val('sta_ssid', cfg.wifi?.sta_ssid);
+  val('sta_password', cfg.wifi?.sta_password);
+  val('hostname', cfg.wifi?.hostname);
+  val('ap_ssid', cfg.wifi?.ap_ssid);
+  val('ap_password', cfg.wifi?.ap_password);
+  val('ap_channel', cfg.wifi?.ap_channel);
 
   // Key mappings
   populateKeyTable();
@@ -359,7 +376,10 @@ function gatherConfig() {
     inter_char_delay_us: gnum('inter_char_delay_us'),
     repeat_delay_ms: gnum('repeat_delay_ms'), repeat_rate_ms: gnum('repeat_rate_ms')
   };
-  cfg.wifi = { ssid: gval('wifi_ssid'), password: gval('wifi_password'), channel: gnum('wifi_channel') };
+  cfg.wifi = {
+    sta_ssid: gval('sta_ssid'), sta_password: gval('sta_password'), hostname: gval('hostname'),
+    ap_ssid: gval('ap_ssid'), ap_password: gval('ap_password'), ap_channel: gnum('ap_channel')
+  };
 
   // Gather key table
   cfg.special_keys = [];
@@ -433,6 +453,9 @@ async function updateStatus() {
     dot('dotBt', s.bt_connected);
     dot('dotWifi', true);
     document.getElementById('modeLabel').textContent = s.ansi_mode ? 'ANSI' : 'Native';
+    if (s.wifi_mode) document.getElementById('wifiModeLabel').textContent = s.wifi_mode;
+    if (s.wifi_ip) document.getElementById('wifiIpLabel').textContent = s.wifi_ip;
+    if (s.hostname) document.getElementById('wifiHostLabel').textContent = s.hostname + '.local';
   } catch(e) {}
 }
 

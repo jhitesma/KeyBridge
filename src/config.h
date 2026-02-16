@@ -61,10 +61,15 @@ struct AdapterConfig {
     bool enable_ble;
     bool enable_wifi;
 
-    // --- WiFi ---
+    // --- WiFi AP ---
     char wifi_ssid[33];     // AP mode SSID
     char wifi_password[65]; // AP mode password (empty = open)
     uint8_t wifi_channel;
+
+    // --- WiFi STA ---
+    char sta_ssid[33];      // STA network SSID (empty = AP-only)
+    char sta_password[65];  // STA network password
+    char hostname[33];      // mDNS hostname (default "keybridge")
 
     // --- Special key mappings ---
     uint8_t num_special_keys;
@@ -112,6 +117,11 @@ static void setDefaultConfig(AdapterConfig &cfg) {
     strlcpy(cfg.wifi_ssid, "KeyBridge", sizeof(cfg.wifi_ssid));
     strlcpy(cfg.wifi_password, "terminal50", sizeof(cfg.wifi_password));
     cfg.wifi_channel = 6;
+
+    // WiFi STA (empty = AP-only on first boot)
+    cfg.sta_ssid[0] = '\0';
+    cfg.sta_password[0] = '\0';
+    strlcpy(cfg.hostname, "keybridge", sizeof(cfg.hostname));
 
     // Default special key mappings (101-key layout)
     cfg.num_special_keys = 22;
@@ -217,7 +227,7 @@ static Preferences prefs;
 bool saveConfig(const AdapterConfig &cfg) {
     prefs.begin("kb_cfg", false);
     size_t written = prefs.putBytes("config", &cfg, sizeof(cfg));
-    prefs.putUInt("version", 4);
+    prefs.putUInt("version", 5);
     prefs.end();
     return (written == sizeof(cfg));
 }
@@ -330,10 +340,13 @@ String configToJson(const AdapterConfig &cfg) {
     features["wifi"]       = cfg.enable_wifi;
 
     // WiFi
-    JsonObject wifi  = doc["wifi"].to<JsonObject>();
-    wifi["ssid"]     = cfg.wifi_ssid;
-    wifi["password"] = cfg.wifi_password;
-    wifi["channel"]  = cfg.wifi_channel;
+    JsonObject wifi     = doc["wifi"].to<JsonObject>();
+    wifi["ap_ssid"]     = cfg.wifi_ssid;
+    wifi["ap_password"] = cfg.wifi_password;
+    wifi["ap_channel"]  = cfg.wifi_channel;
+    wifi["sta_ssid"]    = cfg.sta_ssid;
+    wifi["sta_password"] = cfg.sta_password;
+    wifi["hostname"]    = cfg.hostname;
 
     // Special keys
     JsonArray keys = doc["special_keys"].to<JsonArray>();
@@ -406,9 +419,12 @@ bool jsonToConfig(const String &json, AdapterConfig &cfg) {
     // WiFi
     if (doc.containsKey("wifi")) {
         JsonObject w = doc["wifi"];
-        if (w.containsKey("ssid")) strlcpy(cfg.wifi_ssid, w["ssid"] | "", sizeof(cfg.wifi_ssid));
-        if (w.containsKey("password")) strlcpy(cfg.wifi_password, w["password"] | "", sizeof(cfg.wifi_password));
-        if (w.containsKey("channel")) cfg.wifi_channel = w["channel"];
+        if (w.containsKey("ap_ssid")) strlcpy(cfg.wifi_ssid, w["ap_ssid"] | "", sizeof(cfg.wifi_ssid));
+        if (w.containsKey("ap_password")) strlcpy(cfg.wifi_password, w["ap_password"] | "", sizeof(cfg.wifi_password));
+        if (w.containsKey("ap_channel")) cfg.wifi_channel = w["ap_channel"];
+        if (w.containsKey("sta_ssid")) strlcpy(cfg.sta_ssid, w["sta_ssid"] | "", sizeof(cfg.sta_ssid));
+        if (w.containsKey("sta_password")) strlcpy(cfg.sta_password, w["sta_password"] | "", sizeof(cfg.sta_password));
+        if (w.containsKey("hostname")) strlcpy(cfg.hostname, w["hostname"] | "", sizeof(cfg.hostname));
     }
 
     // Special keys
