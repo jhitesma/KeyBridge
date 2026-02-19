@@ -13,6 +13,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "esp_log.h"
+#include "esp_mac.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/semphr.h"
@@ -58,9 +59,10 @@ typedef struct {
 // GLOBAL STATE
 // ============================================================
 
-static AdapterConfig config;          // Active configuration
-static WebServer server(80);          // Web server
-static QueueHandle_t keyQueue = NULL; // Shared key event queue
+static AdapterConfig config;                // Active configuration
+static SemaphoreHandle_t config_mutex = NULL; // Protects config reads/writes across tasks
+static WebServer server(80);                  // Web server
+static QueueHandle_t keyQueue = NULL;         // Shared key event queue
 
 // Status flags (read by web API)
 static volatile bool usb_keyboard_connected = false;
@@ -500,7 +502,10 @@ static void hidh_callback(void *handler_args, esp_event_base_t base, int32_t id,
                 bt_keyboard_connected = true;
                 const char *name      = esp_hidh_dev_name_get(param->open.dev);
                 logKey("[BT] Connected: %s", name ? name : "unknown");
-                if (config.pin_bt_led >= 0) digitalWrite(config.pin_bt_led, HIGH);
+                if (xSemaphoreTake(config_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+                    if (config.pin_bt_led >= 0) digitalWrite(config.pin_bt_led, HIGH);
+                    xSemaphoreGive(config_mutex);
+                }
             }
             break;
         case ESP_HIDH_INPUT_EVENT:
@@ -518,7 +523,10 @@ static void hidh_callback(void *handler_args, esp_event_base_t base, int32_t id,
             bt_hid_dev            = NULL;
             bt_keyboard_connected = false;
             logKey("[BT] Disconnected");
-            if (config.pin_bt_led >= 0) digitalWrite(config.pin_bt_led, LOW);
+            if (xSemaphoreTake(config_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+                if (config.pin_bt_led >= 0) digitalWrite(config.pin_bt_led, LOW);
+                xSemaphoreGive(config_mutex);
+            }
             break;
         case ESP_HIDH_BATTERY_EVENT:
             logKey("[BT] Battery: %d%%", param->battery.level);
@@ -588,7 +596,7 @@ void startBluetooth() {
     ESP_ERROR_CHECK(esp_bt_controller_enable(mode));
     ESP_ERROR_CHECK(esp_bluedroid_init());
     ESP_ERROR_CHECK(esp_bluedroid_enable());
-    esp_bt_dev_set_device_name("KeyBridge");
+    esp_bt_dev_set_device_name(config.wifi_ssid);
 
 #if CONFIG_BT_CLASSIC_ENABLED
     if (config.enable_bt_classic) esp_bt_gap_set_scan_mode(ESP_BT_CONNECTABLE, ESP_BT_GENERAL_DISCOVERABLE);
@@ -599,6 +607,143 @@ void startBluetooth() {
 
     xTaskCreatePinnedToCore(bt_scan_task, "bt_scan", 6144, NULL, 3, NULL, 0);
     logKey("[BT] Ready. Press PAIR to connect.");
+}
+
+// ============================================================
+// ADMIN PASSWORD (NVS, separate from config blob)
+// ============================================================
+
+static char admin_password[8]; // 6 chars + null
+
+void generatePassword() {
+    // Exclude ambiguous chars: 0/O, 1/l/I
+    static const char charset[] = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789";
+    for (int i = 0; i < 6; i++) {
+        admin_password[i] = charset[esp_random() % (sizeof(charset) - 1)];
+    }
+    admin_password[6] = '\0';
+}
+
+bool loadAdminPass() {
+    Preferences p;
+    p.begin("kb_cfg", true);
+    String pass = p.getString("admin_pass", "");
+    p.end();
+    if (pass.length() == 0) return false;
+    strlcpy(admin_password, pass.c_str(), sizeof(admin_password));
+    return true;
+}
+
+void saveAdminPass() {
+    Preferences p;
+    p.begin("kb_cfg", false);
+    p.putString("admin_pass", admin_password);
+    p.end();
+}
+
+// ============================================================
+// SESSION MANAGEMENT (in-memory, lost on reboot)
+// ============================================================
+
+#define MAX_SESSIONS 4
+#define SESSION_TIMEOUT_MS (30UL * 60 * 1000) // 30 minutes
+
+struct Session {
+    char token[33]; // 32 hex chars + null
+    uint32_t last_activity;
+};
+
+static Session sessions[MAX_SESSIONS];
+
+void generateToken(char *out) {
+    for (int i = 0; i < 32; i += 8) {
+        uint32_t r = esp_random();
+        snprintf(out + i, 9, "%08x", r);
+    }
+    out[32] = '\0';
+}
+
+void expireSessions() {
+    uint32_t now = millis();
+    for (int i = 0; i < MAX_SESSIONS; i++) {
+        if (sessions[i].token[0] && (now - sessions[i].last_activity > SESSION_TIMEOUT_MS)) {
+            sessions[i].token[0] = '\0';
+        }
+    }
+}
+
+const char *createSession() {
+    expireSessions();
+
+    // Find empty slot (or evict oldest)
+    int slot     = -1;
+    uint32_t oldest = UINT32_MAX;
+    int oldest_slot  = 0;
+    for (int i = 0; i < MAX_SESSIONS; i++) {
+        if (sessions[i].token[0] == '\0') {
+            slot = i;
+            break;
+        }
+        if (sessions[i].last_activity < oldest) {
+            oldest      = sessions[i].last_activity;
+            oldest_slot = i;
+        }
+    }
+    if (slot < 0) slot = oldest_slot; // Evict oldest
+
+    generateToken(sessions[slot].token);
+    sessions[slot].last_activity = millis();
+    return sessions[slot].token;
+}
+
+// Extract token from cookie header: "kb_session=TOKEN; other=..."
+static bool getCookieToken(const String &cookies, String &token) {
+    int start = cookies.indexOf("kb_session=");
+    if (start < 0) return false;
+    start += 11; // strlen("kb_session=")
+    int end = cookies.indexOf(';', start);
+    token   = (end < 0) ? cookies.substring(start) : cookies.substring(start, end);
+    token.trim();
+    return token.length() > 0;
+}
+
+bool isAuthenticated() {
+    expireSessions();
+
+    String token;
+
+    // Check cookie first
+    if (server.hasHeader("Cookie")) {
+        if (getCookieToken(server.header("Cookie"), token)) {
+            for (int i = 0; i < MAX_SESSIONS; i++) {
+                if (sessions[i].token[0] && token.equals(sessions[i].token)) {
+                    sessions[i].last_activity = millis();
+                    return true;
+                }
+            }
+        }
+    }
+
+    // Fall back to Authorization: Bearer
+    if (server.hasHeader("Authorization")) {
+        String auth = server.header("Authorization");
+        if (auth.startsWith("Bearer ")) {
+            token = auth.substring(7);
+            token.trim();
+            for (int i = 0; i < MAX_SESSIONS; i++) {
+                if (sessions[i].token[0] && token.equals(sessions[i].token)) {
+                    sessions[i].last_activity = millis();
+                    return true;
+                }
+            }
+        }
+    }
+
+    return false;
+}
+
+void sendUnauthorized() {
+    server.send(401, "application/json", "{\"ok\":false,\"error\":\"Unauthorized\"}");
 }
 
 // ############################################################
@@ -666,30 +811,37 @@ void startWebServer() {
     // Serve the web UI
     server.on("/", HTTP_GET, []() { server.send_P(200, "text/html", WEB_UI_HTML); });
 
-    // GET config
-    server.on("/api/config", HTTP_GET, []() { server.send(200, "application/json", configToJson(config)); });
+    // GET config (auth required — exposes WiFi credentials)
+    server.on("/api/config", HTTP_GET, []() {
+        if (!isAuthenticated()) { sendUnauthorized(); return; }
+        server.send(200, "application/json", configToJson(config));
+    });
 
-    // POST config (save)
+    // POST config (save, auth required)
     server.on("/api/config", HTTP_POST, []() {
+        if (!isAuthenticated()) { sendUnauthorized(); return; }
         String body          = server.arg("plain");
         AdapterConfig newCfg = config; // Start with current
         if (jsonToConfig(body, newCfg)) {
-            config = newCfg;
-            if (saveConfig(config)) {
-                server.send(200, "application/json", "{\"ok\":true}");
-                logKey("[Config] Saved to NVS");
-
-                // Apply runtime-changeable settings immediately
-                // (Pin changes need reboot)
+            if (xSemaphoreTake(config_mutex, portMAX_DELAY) == pdTRUE) {
+                config     = newCfg;
+                bool saved = saveConfig(config);
+                xSemaphoreGive(config_mutex);
+                if (saved) {
+                    server.send(200, "application/json", "{\"ok\":true}");
+                    logKey("[Config] Saved to NVS");
+                } else {
+                    server.send(500, "application/json", "{\"ok\":false,\"error\":\"NVS write failed\"}");
+                }
             } else {
-                server.send(500, "application/json", "{\"ok\":false,\"error\":\"NVS write failed\"}");
+                server.send(503, "application/json", "{\"ok\":false,\"error\":\"Config busy\"}");
             }
         } else {
             server.send(400, "application/json", "{\"ok\":false,\"error\":\"Invalid JSON\"}");
         }
     });
 
-    // Status endpoint
+    // Status endpoint (unauthenticated — device name + connection state only)
     server.on("/api/status", HTTP_GET, []() {
         JsonDocument doc;
         doc["usb_connected"] = (bool)usb_keyboard_connected;
@@ -699,27 +851,31 @@ void startWebServer() {
         doc["wifi_mode"]     = wifi_sta_mode ? "STA" : "AP";
         doc["wifi_ip"]       = wifi_sta_mode ? WiFi.localIP().toString() : WiFi.softAPIP().toString();
         doc["hostname"]      = config.hostname;
+        doc["device_name"]   = config.wifi_ssid;
         String out;
         serializeJson(doc, out);
         server.send(200, "application/json", out);
     });
 
-    // BT pair trigger
+    // BT pair trigger (auth required)
     server.on("/api/bt/pair", HTTP_POST, []() {
+        if (!isAuthenticated()) { sendUnauthorized(); return; }
         bt_scan_requested = true;
         server.send(200, "application/json", "{\"message\":\"Scan initiated — 5 seconds\"}");
     });
 
-    // Factory reset
+    // Factory reset (auth required — destructive)
     server.on("/api/reset", HTTP_POST, []() {
+        if (!isAuthenticated()) { sendUnauthorized(); return; }
         eraseConfig();
         server.send(200, "application/json", "{\"ok\":true}");
         delay(500);
         ESP.restart();
     });
 
-    // Key log
+    // Key log (auth required — keypress log could be sensitive)
     server.on("/api/log", HTTP_GET, []() {
+        if (!isAuthenticated()) { sendUnauthorized(); return; }
         JsonDocument doc;
         JsonArray entries = doc["entries"].to<JsonArray>();
 
@@ -736,8 +892,9 @@ void startWebServer() {
         server.send(200, "application/json", out);
     });
 
-    // Test character send
+    // Test character send (auth required)
     server.on("/api/test", HTTP_POST, []() {
+        if (!isAuthenticated()) { sendUnauthorized(); return; }
         JsonDocument doc;
         if (deserializeJson(doc, server.arg("plain"))) {
             server.send(400, "application/json", "{\"ok\":false,\"error\":\"Invalid JSON\"}");
@@ -761,8 +918,9 @@ void startWebServer() {
         server.send(200, "application/json", "{\"ok\":true}");
     });
 
-    // Presets
+    // Presets (auth required)
     server.on("/api/preset/wyse50", HTTP_GET, []() {
+        if (!isAuthenticated()) { sendUnauthorized(); return; }
         AdapterConfig tmp;
         setDefaultConfig(tmp);
         JsonDocument doc;
@@ -783,6 +941,7 @@ void startWebServer() {
     });
 
     server.on("/api/preset/vt100", HTTP_GET, []() {
+        if (!isAuthenticated()) { sendUnauthorized(); return; }
         // VT100 uses standard ANSI sequences in both columns
         String out =
             "{\"special_keys\":["
@@ -800,6 +959,7 @@ void startWebServer() {
     });
 
     server.on("/api/preset/adm3a", HTTP_GET, []() {
+        if (!isAuthenticated()) { sendUnauthorized(); return; }
         // ADM-3A: very simple, arrows are Ctrl codes, no function keys
         String out =
             "{\"special_keys\":["
@@ -811,6 +971,58 @@ void startWebServer() {
             "]}";
         server.send(200, "application/json", out);
     });
+
+    // Login
+    server.on("/api/login", HTTP_POST, []() {
+        JsonDocument doc;
+        if (deserializeJson(doc, server.arg("plain"))) {
+            server.send(400, "application/json", "{\"ok\":false,\"error\":\"Invalid JSON\"}");
+            return;
+        }
+        const char *pass = doc["password"] | "";
+        if (strcmp(pass, admin_password) != 0) {
+            delay(1000); // Slow brute force
+            server.send(401, "application/json", "{\"ok\":false,\"error\":\"Wrong password\"}");
+            return;
+        }
+        const char *token = createSession();
+        String cookie     = "kb_session=";
+        cookie += token;
+        cookie += "; Path=/; HttpOnly";
+        server.sendHeader("Set-Cookie", cookie);
+        String body = "{\"ok\":true,\"token\":\"";
+        body += token;
+        body += "\"}";
+        server.send(200, "application/json", body);
+    });
+
+    // Change password
+    server.on("/api/password", HTTP_POST, []() {
+        if (!isAuthenticated()) { sendUnauthorized(); return; }
+        JsonDocument doc;
+        if (deserializeJson(doc, server.arg("plain"))) {
+            server.send(400, "application/json", "{\"ok\":false,\"error\":\"Invalid JSON\"}");
+            return;
+        }
+        const char *current = doc["current"] | "";
+        const char *newpass = doc["new"] | "";
+        if (strcmp(current, admin_password) != 0) {
+            server.send(401, "application/json", "{\"ok\":false,\"error\":\"Current password incorrect\"}");
+            return;
+        }
+        size_t len = strlen(newpass);
+        if (len < 4 || len > 6) {
+            server.send(400, "application/json", "{\"ok\":false,\"error\":\"Password must be 4-6 characters\"}");
+            return;
+        }
+        strlcpy(admin_password, newpass, sizeof(admin_password));
+        saveAdminPass();
+        server.send(200, "application/json", "{\"ok\":true}");
+    });
+
+    // Collect auth headers
+    const char *headerKeys[] = {"Cookie", "Authorization"};
+    server.collectHeaders(headerKeys, 2);
 
     server.begin();
 }
@@ -857,14 +1069,32 @@ extern "C" void app_main() {
     Serial.begin(115200);
     delay(500);
 
-    keyLogMutex = xSemaphoreCreateMutex();
-    keyQueue    = xQueueCreate(16, sizeof(KeyReport));
+    keyLogMutex  = xSemaphoreCreateMutex();
+    config_mutex = xSemaphoreCreateMutex();
+    keyQueue     = xQueueCreate(16, sizeof(KeyReport));
 
     // Load or create config
     if (!loadConfig(config)) {
         ESP_LOGI(TAG, "No saved config — using defaults");
         setDefaultConfig(config);
+
+        // Default SSID/hostname include MAC suffix for multi-device distinction
+        uint8_t mac[6];
+        esp_efuse_mac_get_default(mac);
+        snprintf(config.wifi_ssid, sizeof(config.wifi_ssid), "KeyBridge-%02X%02X", mac[4], mac[5]);
+        snprintf(config.hostname, sizeof(config.hostname), "keybridge-%02x%02x", mac[4], mac[5]);
+
         saveConfig(config);
+    }
+
+    // Load or generate admin password (stored separately from config blob)
+    if (!loadAdminPass()) {
+        generatePassword();
+        saveAdminPass();
+        ESP_LOGI(TAG, "========================================");
+        ESP_LOGI(TAG, " ADMIN PASSWORD: %s", admin_password);
+        ESP_LOGI(TAG, " (save this — needed for web UI login)");
+        ESP_LOGI(TAG, "========================================");
     }
 
     // Read mode jumper at boot

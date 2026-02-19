@@ -56,10 +56,26 @@ td input[type=number]{width:50px}
 .toast.show{opacity:1}.toast-ok{background:var(--ok);color:#000}.toast-err{background:var(--hi);color:#fff}
 #keyLog{background:var(--input-bg);border:1px solid var(--border);border-radius:4px;padding:8px;font-family:monospace;font-size:.8em;height:120px;overflow-y:auto;white-space:pre;color:var(--ok);margin-top:8px}
 @media(max-width:600px){.row{flex-direction:column;align-items:flex-start}.row label{min-width:auto}}
+#loginScreen{display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:60vh}
+.login-card{background:var(--card);border-radius:8px;padding:32px;text-align:center;width:100%;max-width:360px}
+.login-card h2{color:var(--hi);margin-bottom:4px;font-size:1.2em}
+.login-card .device-id{color:var(--dim);font-size:.85em;margin-bottom:20px}
+.login-card input[type=password]{width:100%;padding:10px;background:var(--input-bg);border:1px solid var(--border);color:var(--text);border-radius:4px;font-size:1em;margin-bottom:12px;text-align:center}
+.login-card button{width:100%;padding:10px}
 </style>
 </head>
 <body>
 
+<div id="loginScreen">
+  <div class="login-card">
+    <h2>&#x2328; KeyBridge</h2>
+    <div class="device-id" id="loginDeviceName">Connecting...</div>
+    <input type="password" id="loginPass" placeholder="Password" autocomplete="current-password">
+    <button class="btn-primary" onclick="doLogin()">Log In</button>
+  </div>
+</div>
+
+<div id="mainUI" style="display:none">
 <h1>&#x2328; KeyBridge</h1>
 <p class="subtitle">USB / Bluetooth &rarr; Parallel ASCII Terminal Interface</p>
 
@@ -75,7 +91,7 @@ td input[type=number]{width:50px}
   <button class="tab" onclick="showTab('pins',event)">Pins</button>
   <button class="tab" onclick="showTab('timing',event)">Timing</button>
   <button class="tab" onclick="showTab('keys',event)">Key Mappings</button>
-  <button class="tab" onclick="showTab('wifi',event)">WiFi</button>
+  <button class="tab" onclick="showTab('wifi',event)">Settings</button>
   <button class="tab" onclick="showTab('monitor',event)">Monitor</button>
 </div>
 
@@ -200,8 +216,13 @@ td input[type=number]{width:50px}
   </div>
 </div>
 
-<!-- WIFI TAB -->
+<!-- WIFI / SETTINGS TAB -->
 <div class="panel" id="panel-wifi">
+  <div class="group">
+    <div class="group-title">Device</div>
+    <div class="row"><label>Device name</label><input type="text" id="device_name" maxlength="32">
+      <span class="hint">Sets AP SSID + hostname</span></div>
+  </div>
   <div class="group">
     <div class="group-title">Current Status</div>
     <div class="row"><label>WiFi mode</label><strong id="wifiModeLabel">--</strong></div>
@@ -213,13 +234,10 @@ td input[type=number]{width:50px}
     <p class="hint" style="margin-bottom:8px">Connect to an existing WiFi network. Leave SSID empty for AP-only mode.</p>
     <div class="row"><label>Network SSID</label><input type="text" id="sta_ssid" maxlength="32"></div>
     <div class="row"><label>Password</label><input type="text" id="sta_password" maxlength="64"></div>
-    <div class="row"><label>Hostname</label><input type="text" id="hostname" maxlength="32">
-      <span class="hint">.local (mDNS)</span></div>
   </div>
   <div class="group">
-    <div class="group-title">Access Point Settings</div>
-    <p class="hint" style="margin-bottom:8px">Fallback when STA not configured or fails to connect.</p>
-    <div class="row"><label>AP name (SSID)</label><input type="text" id="ap_ssid" maxlength="32"></div>
+    <div class="group-title">Access Point</div>
+    <p class="hint" style="margin-bottom:8px">WiFi password and channel for AP mode.</p>
     <div class="row"><label>AP password</label><input type="text" id="ap_password" maxlength="63">
       <span class="hint">Min 8 chars, or empty for open</span></div>
     <div class="row"><label>AP channel</label><input type="number" id="ap_channel" min="1" max="13"></div>
@@ -228,6 +246,15 @@ td input[type=number]{width:50px}
     <button class="btn-primary" onclick="saveAll()">&#x1F4BE; Save &amp; Apply</button>
   </div>
   <p class="hint" style="margin-top:8px">WiFi changes take effect after reboot.</p>
+  <div class="group" style="margin-top:16px">
+    <div class="group-title">Change Password</div>
+    <div class="row"><label>Current password</label><input type="password" id="cur_pass" maxlength="6" autocomplete="current-password" style="width:160px"></div>
+    <div class="row"><label>New password</label><input type="password" id="new_pass" maxlength="6" autocomplete="new-password" style="width:160px">
+      <span class="hint">4-6 characters</span></div>
+    <div class="actions" style="margin-top:8px">
+      <button class="btn-secondary" onclick="changePassword()">Change Password</button>
+    </div>
+  </div>
 </div>
 
 <!-- MONITOR TAB -->
@@ -250,6 +277,7 @@ td input[type=number]{width:50px}
     </div>
   </div>
 </div>
+</div><!-- /mainUI -->
 
 <div class="toast" id="toast"></div>
 
@@ -273,10 +301,54 @@ function toast(msg, ok) {
   setTimeout(() => t.classList.remove('show'), 2500);
 }
 
+// --- Auth / Login ---
+function showLogin() {
+  document.getElementById('loginScreen').style.display = 'flex';
+  document.getElementById('mainUI').style.display = 'none';
+  if (logPoll) { clearInterval(logPoll); logPoll = null; }
+  // Fetch device name for login screen
+  fetch('/api/status').then(r => r.json()).then(s => {
+    document.getElementById('loginDeviceName').textContent = s.device_name || s.hostname || 'KeyBridge';
+  }).catch(() => {});
+  setTimeout(() => document.getElementById('loginPass').focus(), 100);
+}
+
+function showMain() {
+  document.getElementById('loginScreen').style.display = 'none';
+  document.getElementById('mainUI').style.display = 'block';
+}
+
+async function doLogin() {
+  const pass = document.getElementById('loginPass').value;
+  if (!pass) return;
+  try {
+    const r = await fetch('/api/login', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({password: pass})
+    });
+    const result = await r.json();
+    if (result.ok) {
+      document.getElementById('loginPass').value = '';
+      showMain();
+      loadConfig();
+    } else {
+      toast(result.error || 'Login failed', false);
+      document.getElementById('loginPass').value = '';
+      document.getElementById('loginPass').focus();
+    }
+  } catch(e) { toast('Connection error', false); }
+}
+
+document.getElementById('loginPass').addEventListener('keydown', e => {
+  if (e.key === 'Enter') doLogin();
+});
+
 // --- Load config from device ---
 async function loadConfig() {
   try {
     const r = await fetch('/api/config');
+    if (r.status === 401) { showLogin(); return; }
     if (!r.ok) throw new Error('HTTP ' + r.status);
     cfg = await r.json();
     populateForm();
@@ -311,11 +383,10 @@ function populateForm() {
   val('repeat_delay_ms', cfg.timing?.repeat_delay_ms);
   val('repeat_rate_ms', cfg.timing?.repeat_rate_ms);
 
-  // WiFi
+  // WiFi / Settings
+  val('device_name', cfg.wifi?.ap_ssid);
   val('sta_ssid', cfg.wifi?.sta_ssid);
   val('sta_password', cfg.wifi?.sta_password);
-  val('hostname', cfg.wifi?.hostname);
-  val('ap_ssid', cfg.wifi?.ap_ssid);
   val('ap_password', cfg.wifi?.ap_password);
   val('ap_channel', cfg.wifi?.ap_channel);
 
@@ -377,9 +448,12 @@ function gatherConfig() {
     inter_char_delay_us: gnum('inter_char_delay_us'),
     repeat_delay_ms: gnum('repeat_delay_ms'), repeat_rate_ms: gnum('repeat_rate_ms')
   };
+  const devName = gval('device_name');
+  const hostName = devName.toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
   cfg.wifi = {
-    sta_ssid: gval('sta_ssid'), sta_password: gval('sta_password'), hostname: gval('hostname'),
-    ap_ssid: gval('ap_ssid'), ap_password: gval('ap_password'), ap_channel: gnum('ap_channel')
+    sta_ssid: gval('sta_ssid'), sta_password: gval('sta_password'),
+    hostname: hostName || 'keybridge',
+    ap_ssid: devName, ap_password: gval('ap_password'), ap_channel: gnum('ap_channel')
   };
 
   // Gather key table
@@ -456,6 +530,27 @@ async function sendTest() {
   } catch(e) { toast('Send failed', false); }
 }
 
+async function changePassword() {
+  const cur = document.getElementById('cur_pass').value;
+  const nw = document.getElementById('new_pass').value;
+  if (!cur || !nw) { toast('Fill in both fields', false); return; }
+  if (nw.length < 4 || nw.length > 6) { toast('New password must be 4-6 characters', false); return; }
+  try {
+    const r = await fetch('/api/password', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({current: cur, new: nw})
+    });
+    const result = await r.json();
+    if (result.ok) {
+      toast('Password changed', true);
+      document.getElementById('cur_pass').value = '';
+      document.getElementById('new_pass').value = '';
+    } else {
+      toast(result.error || 'Failed', false);
+    }
+  } catch(e) { toast('Error: ' + e, false); }
+}
+
 // --- Status polling ---
 async function updateStatus() {
   try {
@@ -515,9 +610,23 @@ function gchk(id) { return $(id) ? $(id).checked : false; }
 function dot(id, on) { const d = $(id); if(d) d.className = 'status-dot ' + (on?'dot-on':'dot-off'); }
 function esc(s) { return String(s||'').replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;'); }
 
-// Init
-loadConfig();
-setInterval(updateStatus, 5000);
+// Init — check auth by trying to load config
+async function init() {
+  try {
+    const r = await fetch('/api/config');
+    if (r.status === 401) { showLogin(); return; }
+    if (r.ok) {
+      cfg = await r.json();
+      showMain();
+      populateForm();
+      updateStatus();
+      setInterval(updateStatus, 5000);
+    } else {
+      showLogin();
+    }
+  } catch(e) { showLogin(); }
+}
+init();
 </script>
 </body>
 </html>
