@@ -246,13 +246,13 @@ td input[type=number]{width:50px}
     <button class="btn-primary" onclick="saveAll()">&#x1F4BE; Save &amp; Apply</button>
   </div>
   <p class="hint" style="margin-top:8px">WiFi changes take effect after reboot.</p>
-  <div class="group" style="margin-top:16px">
-    <div class="group-title">Change Password</div>
-    <div class="row"><label>Current password</label><input type="password" id="cur_pass" maxlength="6" autocomplete="current-password" style="width:160px"></div>
+  <div class="group" style="margin-top:16px" id="passwordGroup">
+    <div class="group-title" id="passGroupTitle">Password</div>
+    <div class="row" id="curPassRow"><label>Current password</label><input type="password" id="cur_pass" maxlength="6" autocomplete="current-password" style="width:160px"></div>
     <div class="row"><label>New password</label><input type="password" id="new_pass" maxlength="6" autocomplete="new-password" style="width:160px">
-      <span class="hint">4-6 characters</span></div>
+      <span class="hint">4-6 characters, or empty to remove</span></div>
     <div class="actions" style="margin-top:8px">
-      <button class="btn-secondary" onclick="changePassword()">Change Password</button>
+      <button class="btn-secondary" id="passBtn" onclick="changePassword()">Set Password</button>
     </div>
   </div>
 </div>
@@ -533,8 +533,10 @@ async function sendTest() {
 async function changePassword() {
   const cur = document.getElementById('cur_pass').value;
   const nw = document.getElementById('new_pass').value;
-  if (!cur || !nw) { toast('Fill in both fields', false); return; }
-  if (nw.length < 4 || nw.length > 6) { toast('New password must be 4-6 characters', false); return; }
+  const isSet = document.getElementById('curPassRow').style.display !== 'none';
+  if (isSet && !cur) { toast('Enter current password', false); return; }
+  if (nw.length > 0 && (nw.length < 4 || nw.length > 6)) { toast('Password must be 4-6 characters', false); return; }
+  if (!nw && !isSet) { toast('Enter a password', false); return; }
   try {
     const r = await fetch('/api/password', {
       method: 'POST', headers: {'Content-Type':'application/json'},
@@ -542,9 +544,10 @@ async function changePassword() {
     });
     const result = await r.json();
     if (result.ok) {
-      toast('Password changed', true);
+      toast(nw ? 'Password set' : 'Password removed', true);
       document.getElementById('cur_pass').value = '';
       document.getElementById('new_pass').value = '';
+      updatePasswordUI(nw.length > 0);
     } else {
       toast(result.error || 'Failed', false);
     }
@@ -610,6 +613,22 @@ function gchk(id) { return $(id) ? $(id).checked : false; }
 function dot(id, on) { const d = $(id); if(d) d.className = 'status-dot ' + (on?'dot-on':'dot-off'); }
 function esc(s) { return String(s||'').replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;'); }
 
+// Update password UI based on whether a password is set
+function updatePasswordUI(authRequired) {
+  const curRow = document.getElementById('curPassRow');
+  const title = document.getElementById('passGroupTitle');
+  const btn = document.getElementById('passBtn');
+  if (authRequired) {
+    curRow.style.display = 'flex';
+    title.textContent = 'Change Password';
+    btn.textContent = 'Change Password';
+  } else {
+    curRow.style.display = 'none';
+    title.textContent = 'Set Password';
+    btn.textContent = 'Set Password';
+  }
+}
+
 // Init — check auth by trying to load config
 async function init() {
   try {
@@ -619,6 +638,12 @@ async function init() {
       cfg = await r.json();
       showMain();
       populateForm();
+      // Check if auth is required and update password UI
+      const sr = await fetch('/api/status');
+      if (sr.ok) {
+        const s = await sr.json();
+        updatePasswordUI(s.auth_required);
+      }
       updateStatus();
       setInterval(updateStatus, 5000);
     } else {

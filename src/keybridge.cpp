@@ -13,7 +13,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include "esp_log.h"
-#include "esp_mac.h"
+#include "esp_wifi.h"
+#include "esp_task_wdt.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/semphr.h"
@@ -22,6 +23,7 @@
 // WiFi + Web Server
 #include <WiFi.h>
 #include <WebServer.h>
+#include <DNSServer.h>
 #include <ArduinoJson.h>
 #include <mdns.h>
 
@@ -62,6 +64,7 @@ typedef struct {
 static AdapterConfig config;                // Active configuration
 static SemaphoreHandle_t config_mutex = NULL; // Protects config reads/writes across tasks
 static WebServer server(80);                  // Web server
+static DNSServer dnsServer;                   // Captive portal DNS (AP mode only)
 static QueueHandle_t keyQueue = NULL;         // Shared key event queue
 
 // Status flags (read by web API)
@@ -576,26 +579,23 @@ static void bt_scan_task(void *arg) {
     }
 }
 
-void startBluetooth() {
-    esp_bt_mode_t mode;
+static void bt_init_task(void *arg) {
+    ESP_LOGI(TAG, "[BT] Init starting...");
+
+    // Determine BT mode
+    uint8_t mode = ESP_BT_MODE_BLE;
 #if CONFIG_BT_CLASSIC_ENABLED
     if (config.enable_bt_classic && config.enable_ble)
         mode = ESP_BT_MODE_BTDM;
-    else if (config.enable_bt_classic) {
-        esp_bt_controller_mem_release(ESP_BT_MODE_BLE);
+    else if (config.enable_bt_classic)
         mode = ESP_BT_MODE_CLASSIC_BT;
-    } else
 #endif
-    {
-        esp_bt_controller_mem_release(ESP_BT_MODE_CLASSIC_BT);
-        mode = ESP_BT_MODE_BLE;
-    }
 
-    esp_bt_controller_config_t bt_cfg = BT_CONTROLLER_INIT_CONFIG_DEFAULT();
-    ESP_ERROR_CHECK(esp_bt_controller_init(&bt_cfg));
-    ESP_ERROR_CHECK(esp_bt_controller_enable(mode));
-    ESP_ERROR_CHECK(esp_bluedroid_init());
-    ESP_ERROR_CHECK(esp_bluedroid_enable());
+    // esp_hid_gap_init handles the full BT stack via init_low_level():
+    // mem release, controller init/enable, bluedroid init/enable, GAP profile setup
+    ESP_ERROR_CHECK(esp_hid_gap_init(mode));
+    ESP_LOGI(TAG, "[BT] GAP initialized");
+
     esp_bt_dev_set_device_name(config.wifi_ssid);
 
 #if CONFIG_BT_CLASSIC_ENABLED
@@ -604,25 +604,26 @@ void startBluetooth() {
 
     esp_hidh_config_t hidh_cfg = {.callback = hidh_callback, .event_stack_size = 4096};
     ESP_ERROR_CHECK(esp_hidh_init(&hidh_cfg));
+    ESP_LOGI(TAG, "[BT] HID host initialized");
 
     xTaskCreatePinnedToCore(bt_scan_task, "bt_scan", 6144, NULL, 3, NULL, 0);
     logKey("[BT] Ready. Press PAIR to connect.");
+    ESP_LOGI(TAG, "[BT] Init complete");
+
+    vTaskDelete(NULL); // Self-delete — init is done
+}
+
+void startBluetooth() {
+    xTaskCreatePinnedToCore(bt_init_task, "bt_init", 8192, NULL, 3, NULL, 0);
 }
 
 // ============================================================
 // ADMIN PASSWORD (NVS, separate from config blob)
 // ============================================================
 
-static char admin_password[8]; // 6 chars + null
+static char admin_password[8]; // up to 6 chars + null; empty = no auth
 
-void generatePassword() {
-    // Exclude ambiguous chars: 0/O, 1/l/I
-    static const char charset[] = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789";
-    for (int i = 0; i < 6; i++) {
-        admin_password[i] = charset[esp_random() % (sizeof(charset) - 1)];
-    }
-    admin_password[6] = '\0';
-}
+bool hasPassword() { return admin_password[0] != '\0'; }
 
 bool loadAdminPass() {
     Preferences p;
@@ -638,6 +639,14 @@ void saveAdminPass() {
     Preferences p;
     p.begin("kb_cfg", false);
     p.putString("admin_pass", admin_password);
+    p.end();
+}
+
+void clearAdminPass() {
+    admin_password[0] = '\0';
+    Preferences p;
+    p.begin("kb_cfg", false);
+    p.remove("admin_pass");
     p.end();
 }
 
@@ -708,6 +717,8 @@ static bool getCookieToken(const String &cookies, String &token) {
 }
 
 bool isAuthenticated() {
+    if (!hasPassword()) return true; // No password set — auth disabled
+
     expireSessions();
 
     String token;
@@ -776,7 +787,11 @@ bool connectSta() {
 }
 
 void startAp() {
+    WiFi.enableSTA(false);
     WiFi.mode(WIFI_AP);
+    IPAddress apIp(192, 168, 4, 1);
+    IPAddress subnet(255, 255, 255, 0);
+    WiFi.softAPConfig(apIp, apIp, subnet);
     WiFi.softAP(config.wifi_ssid, config.wifi_password, config.wifi_channel);
 }
 
@@ -808,8 +823,18 @@ void startWebServer() {
     startMdns();
     ESP_LOGI(TAG, "[WiFi] http://%s.local/", config.hostname);
 
+    // Captive portal DNS redirect (AP mode only)
+    if (!wifi_sta_mode) {
+        dnsServer.start(53, "*", WiFi.softAPIP());
+        ESP_LOGI(TAG, "[WiFi] Captive portal DNS active");
+    }
+
     // Serve the web UI
-    server.on("/", HTTP_GET, []() { server.send_P(200, "text/html", WEB_UI_HTML); });
+    server.on("/", HTTP_GET, []() {
+        ESP_LOGI(TAG, "[HTTP] GET / — serving UI (%u bytes)", (unsigned)sizeof(WEB_UI_HTML));
+        esp_task_wdt_reset(); // Feed watchdog before long PROGMEM send
+        server.send_P(200, "text/html", WEB_UI_HTML);
+    });
 
     // GET config (auth required — exposes WiFi credentials)
     server.on("/api/config", HTTP_GET, []() {
@@ -852,6 +877,7 @@ void startWebServer() {
         doc["wifi_ip"]       = wifi_sta_mode ? WiFi.localIP().toString() : WiFi.softAPIP().toString();
         doc["hostname"]      = config.hostname;
         doc["device_name"]   = config.wifi_ssid;
+        doc["auth_required"] = hasPassword();
         String out;
         serializeJson(doc, out);
         server.send(200, "application/json", out);
@@ -996,7 +1022,7 @@ void startWebServer() {
         server.send(200, "application/json", body);
     });
 
-    // Change password
+    // Set or change password
     server.on("/api/password", HTTP_POST, []() {
         if (!isAuthenticated()) { sendUnauthorized(); return; }
         JsonDocument doc;
@@ -1006,10 +1032,20 @@ void startWebServer() {
         }
         const char *current = doc["current"] | "";
         const char *newpass = doc["new"] | "";
-        if (strcmp(current, admin_password) != 0) {
+
+        // If password already set, verify current password
+        if (hasPassword() && strcmp(current, admin_password) != 0) {
             server.send(401, "application/json", "{\"ok\":false,\"error\":\"Current password incorrect\"}");
             return;
         }
+
+        // Empty new password = remove password (disable auth)
+        if (strlen(newpass) == 0) {
+            clearAdminPass();
+            server.send(200, "application/json", "{\"ok\":true}");
+            return;
+        }
+
         size_t len = strlen(newpass);
         if (len < 4 || len > 6) {
             server.send(400, "application/json", "{\"ok\":false,\"error\":\"Password must be 4-6 characters\"}");
@@ -1017,7 +1053,24 @@ void startWebServer() {
         }
         strlcpy(admin_password, newpass, sizeof(admin_password));
         saveAdminPass();
+
+        // Create a session so the user stays logged in
+        const char *token = createSession();
+        String cookie     = "kb_session=";
+        cookie += token;
+        cookie += "; Path=/; HttpOnly";
+        server.sendHeader("Set-Cookie", cookie);
         server.send(200, "application/json", "{\"ok\":true}");
+    });
+
+    // Redirect unknown paths to root (helps captive portal detection)
+    server.onNotFound([]() {
+        ESP_LOGI(TAG, "[HTTP] 302 %s -> /", server.uri().c_str());
+        String url = "http://";
+        url += wifi_sta_mode ? WiFi.localIP().toString() : WiFi.softAPIP().toString();
+        url += "/";
+        server.sendHeader("Location", url);
+        server.send(302, "text/plain", "");
     });
 
     // Collect auth headers
@@ -1025,6 +1078,7 @@ void startWebServer() {
     server.collectHeaders(headerKeys, 2);
 
     server.begin();
+    ESP_LOGI(TAG, "[WiFi] Web server listening on port 80");
 }
 
 // ############################################################
@@ -1077,25 +1131,11 @@ extern "C" void app_main() {
     if (!loadConfig(config)) {
         ESP_LOGI(TAG, "No saved config — using defaults");
         setDefaultConfig(config);
-
-        // Default SSID/hostname include MAC suffix for multi-device distinction
-        uint8_t mac[6];
-        esp_efuse_mac_get_default(mac);
-        snprintf(config.wifi_ssid, sizeof(config.wifi_ssid), "KeyBridge-%02X%02X", mac[4], mac[5]);
-        snprintf(config.hostname, sizeof(config.hostname), "keybridge-%02x%02x", mac[4], mac[5]);
-
         saveConfig(config);
     }
 
-    // Load or generate admin password (stored separately from config blob)
-    if (!loadAdminPass()) {
-        generatePassword();
-        saveAdminPass();
-        ESP_LOGI(TAG, "========================================");
-        ESP_LOGI(TAG, " ADMIN PASSWORD: %s", admin_password);
-        ESP_LOGI(TAG, " (save this — needed for web UI login)");
-        ESP_LOGI(TAG, "========================================");
-    }
+    // Load admin password (empty = no auth until user sets one)
+    loadAdminPass();
 
     // Read mode jumper at boot
     if (config.use_mode_jumper && config.pin_mode_jp >= 0) {
@@ -1129,9 +1169,11 @@ extern "C" void app_main() {
     if (config.enable_usb) startUsbHost();
     if (config.enable_bt_classic || config.enable_ble) startBluetooth();
 
+    ESP_LOGI(TAG, "Free heap: %lu bytes", (unsigned long)esp_get_free_heap_size());
     ESP_LOGI(TAG, "Ready.");
 
     // Main loop
+    static uint32_t lastHeartbeat = 0;
     while (true) {
         // Process key events
         KeyReport report;
@@ -1149,13 +1191,24 @@ extern "C" void app_main() {
             checkModeJumper();
         }
 
-        // Web server
-        if (config.enable_wifi) server.handleClient();
+        // Web server + captive portal DNS
+        if (config.enable_wifi) {
+            if (!wifi_sta_mode) dnsServer.processNextRequest();
+            server.handleClient();
+        }
 
         // LED off
         if (config.pin_led >= 0 && ledOffTime && millis() >= ledOffTime) {
             digitalWrite(config.pin_led, LOW);
             ledOffTime = 0;
+        }
+
+        // Periodic heartbeat (every 10 seconds)
+        if (millis() - lastHeartbeat >= 10000) {
+            lastHeartbeat = millis();
+            ESP_LOGI(TAG, "[HEARTBEAT] heap=%lu stations=%d",
+                     (unsigned long)esp_get_free_heap_size(),
+                     WiFi.softAPgetStationNum());
         }
 
         delay(1);

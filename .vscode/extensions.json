@@ -1,7 +1,12 @@
 {
-  "recommendations": [
-    "platformio.platformio-ide",
-    "llvm-vs-code-extensions.vscode-clangd",
-    "editorconfig.editorconfig"
-  ]
+    // See http://go.microsoft.com/fwlink/?LinkId=827846
+    // for the documentation about the extensions.json format
+    "recommendations": [
+        "editorconfig.editorconfig",
+        "llvm-vs-code-extensions.vscode-clangd",
+        "platformio.platformio-ide"
+    ],
+    "unwantedRecommendations": [
+        "ms-vscode.cpptools-extension-pack"
+    ]
 }
