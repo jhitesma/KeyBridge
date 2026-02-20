@@ -16,6 +16,7 @@
 
 # ESP-IDF build artifacts (combined framework)
 sdkconfig.esp32s3
+sdkconfig.esp32dev
 managed_components/
 
 # OS files

@@ -351,6 +351,10 @@ static void handle_ble_device_result(struct ble_scan_result_evt_param *scan_rst)
 
     uint8_t uuid_len = 0;
     uint8_t *uuid_d = esp_ble_resolve_adv_data(scan_rst->ble_adv, ESP_BLE_AD_TYPE_16SRV_CMPL, &uuid_len);
+    if (uuid_d == NULL || uuid_len == 0) {
+        // Many HID keyboards (Keychron, etc.) use the incomplete UUID list
+        uuid_d = esp_ble_resolve_adv_data(scan_rst->ble_adv, ESP_BLE_AD_TYPE_16SRV_PART, &uuid_len);
+    }
     if (uuid_d != NULL && uuid_len) {
         uuid = uuid_d[0] + (uuid_d[1] << 8);
     }
@@ -384,7 +388,13 @@ static void handle_ble_device_result(struct ble_scan_result_evt_param *scan_rst)
     }
     GAP_DBG_PRINTF("\n");
 
-    if (uuid == ESP_GATT_UUID_HID_SVC) {
+    // Accept device if it advertises HID service UUID (0x1812),
+    // or has a HID-class appearance (keyboard=0x03C1, mouse=0x03C2, gamepad=0x03C4, generic HID=0x03C0)
+    bool is_hid = (uuid == ESP_GATT_UUID_HID_SVC);
+    if (!is_hid && appearance >= 0x03C0 && appearance <= 0x03CF) {
+        is_hid = true;
+    }
+    if (is_hid) {
         add_ble_scan_result(scan_rst->bda, scan_rst->ble_addr_type, appearance, adv_name, adv_name_len, scan_rst->rssi);
     }
 }

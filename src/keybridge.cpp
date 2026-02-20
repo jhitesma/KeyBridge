@@ -1,12 +1,12 @@
 /*
  * ============================================================
- * KeyBridge — USB / Bluetooth to Parallel Terminal Adapter
+ * KeyBridge — Bluetooth Keyboard to Wyse 50 Terminal Adapter
  * ============================================================
- * Universal parallel ASCII keyboard adapter with web-based
- * configuration interface. Supports USB, BT Classic, and BLE
- * keyboards. All settings configurable at runtime via WiFi.
+ * Emulates the Wyse 50 keyboard scan matrix so a modern
+ * Bluetooth keyboard can replace the missing original.
+ * All settings configurable at runtime via WiFi.
  *
- * Target:    ESP32-S3
+ * Target:    ESP32 (WROOM-32) — Classic BT + BLE + WiFi
  * Framework: Arduino + ESP-IDF (combined)
  */
 
@@ -27,8 +27,10 @@
 #include <ArduinoJson.h>
 #include <mdns.h>
 
-// USB Host
+// USB Host (ESP32-S3 only — original ESP32 has no USB OTG)
+#if CONFIG_SOC_USB_OTG_SUPPORTED
 #include "usb/usb_host.h"
+#endif
 
 // Bluetooth
 #include "esp_bt.h"
@@ -36,6 +38,7 @@
 #include "esp_bt_device.h"
 #include "esp_gap_bt_api.h"
 #include "esp_hidh.h"
+#include "esp_hidh_gattc.h"
 #include "esp_hid_gap.h"
 #include "esp_gap_ble_api.h"
 
@@ -353,8 +356,9 @@ void handleAutoRepeat() {
 }
 
 // ############################################################
-//  USB HOST
+//  USB HOST (ESP32-S3 only — original ESP32 has no USB OTG)
 // ############################################################
+#if CONFIG_SOC_USB_OTG_SUPPORTED
 
 static usb_host_client_handle_t usb_client_hdl = NULL;
 static usb_device_handle_t usb_dev_hdl         = NULL;
@@ -423,8 +427,10 @@ static void usb_set_boot_protocol(usb_device_handle_t dev, uint8_t iface) {
 }
 
 static void usb_host_daemon_task(void *arg) {
+    ESP_LOGI(TAG, "[USB] Host library installing...");
     usb_host_config_t cfg = {.skip_phy_setup = false, .intr_flags = ESP_INTR_FLAG_LEVEL1};
     ESP_ERROR_CHECK(usb_host_install(&cfg));
+    ESP_LOGI(TAG, "[USB] Host library ready, waiting for devices");
     while (true)
         usb_host_lib_handle_events(portMAX_DELAY, NULL);
 }
@@ -434,11 +440,16 @@ static void usb_keyboard_task(void *arg) {
                                     .max_num_event_msg = 5,
                                     .async = {.client_event_callback = usb_client_event_cb, .callback_arg = NULL}};
     ESP_ERROR_CHECK(usb_host_client_register(&cfg, &usb_client_hdl));
+    ESP_LOGI(TAG, "[USB] Client registered, polling for keyboards");
 
     while (true) {
         usb_host_client_handle_events(usb_client_hdl, pdMS_TO_TICKS(100));
         if (!usb_keyboard_connected && xSemaphoreTake(usb_device_sem, 0) == pdTRUE) {
-            if (usb_host_device_open(usb_client_hdl, 1, &usb_dev_hdl) != ESP_OK) continue;
+            ESP_LOGI(TAG, "[USB] New device detected, opening...");
+            if (usb_host_device_open(usb_client_hdl, 1, &usb_dev_hdl) != ESP_OK) {
+                ESP_LOGW(TAG, "[USB] Failed to open device");
+                continue;
+            }
 
             const usb_config_desc_t *ccfg;
             usb_host_get_active_config_descriptor(usb_dev_hdl, &ccfg);
@@ -467,12 +478,14 @@ static void usb_keyboard_task(void *arg) {
                     usb_xfer_in->timeout_ms       = 0;
                     usb_keyboard_connected        = true;
                     connected                     = true;
+                    ESP_LOGI(TAG, "[USB] Keyboard connected (iface %d, ep 0x%02x)", iface, p[off + 2]);
                     logKey("[USB] Keyboard connected");
                     usb_host_transfer_submit(usb_xfer_in);
                 }
                 off += dlen;
             }
             if (!connected) {
+                ESP_LOGW(TAG, "[USB] Device is not a boot keyboard, closing");
                 usb_host_device_close(usb_client_hdl, usb_dev_hdl);
                 usb_dev_hdl = NULL;
             }
@@ -486,6 +499,8 @@ void startUsbHost() {
     vTaskDelay(pdMS_TO_TICKS(100));
     xTaskCreatePinnedToCore(usb_keyboard_task, "usb_kb", 4096, NULL, 5, NULL, 1);
 }
+
+#endif // CONFIG_SOC_USB_OTG_SUPPORTED
 
 // ############################################################
 //  BLUETOOTH
@@ -580,9 +595,10 @@ static void bt_scan_task(void *arg) {
 }
 
 static void bt_init_task(void *arg) {
-    ESP_LOGI(TAG, "[BT] Init starting...");
+    ESP_LOGI(TAG, "[BT] Init starting (heap=%lu)...",
+             (unsigned long)esp_get_free_heap_size());
 
-    // Determine BT mode
+    // Determine BT mode from config
     uint8_t mode = ESP_BT_MODE_BLE;
 #if CONFIG_BT_CLASSIC_ENABLED
     if (config.enable_bt_classic && config.enable_ble)
@@ -593,18 +609,42 @@ static void bt_init_task(void *arg) {
 
     // esp_hid_gap_init handles the full BT stack via init_low_level():
     // mem release, controller init/enable, bluedroid init/enable, GAP profile setup
-    ESP_ERROR_CHECK(esp_hid_gap_init(mode));
-    ESP_LOGI(TAG, "[BT] GAP initialized");
+    esp_err_t ret = esp_hid_gap_init(mode);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "[BT] GAP init failed: %s", esp_err_to_name(ret));
+        vTaskDelete(NULL);
+        return;
+    }
+    ESP_LOGI(TAG, "[BT] GAP initialized (heap=%lu)", (unsigned long)esp_get_free_heap_size());
 
     esp_bt_dev_set_device_name(config.wifi_ssid);
 
 #if CONFIG_BT_CLASSIC_ENABLED
-    if (config.enable_bt_classic) esp_bt_gap_set_scan_mode(ESP_BT_CONNECTABLE, ESP_BT_GENERAL_DISCOVERABLE);
+    if (config.enable_bt_classic)
+        esp_bt_gap_set_scan_mode(ESP_BT_CONNECTABLE, ESP_BT_GENERAL_DISCOVERABLE);
 #endif
 
+    // Register the GATTC callback BEFORE esp_hidh_init — required by the esp_hid
+    // component (see esp_hidh_gattc.h). Without this, GATTC registration events
+    // are never delivered and esp_hidh_init hangs forever at WAIT_CB().
+    if (mode != ESP_BT_MODE_CLASSIC_BT) {
+        ret = esp_ble_gattc_register_callback(esp_hidh_gattc_event_handler);
+        if (ret != ESP_OK) {
+            ESP_LOGE(TAG, "[BT] GATTC register callback failed: %s", esp_err_to_name(ret));
+            vTaskDelete(NULL);
+            return;
+        }
+    }
+
+    ESP_LOGI(TAG, "[BT] Initializing HID host...");
     esp_hidh_config_t hidh_cfg = {.callback = hidh_callback, .event_stack_size = 4096};
-    ESP_ERROR_CHECK(esp_hidh_init(&hidh_cfg));
-    ESP_LOGI(TAG, "[BT] HID host initialized");
+    ret = esp_hidh_init(&hidh_cfg);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "[BT] HID host init failed: %s", esp_err_to_name(ret));
+        vTaskDelete(NULL);
+        return;
+    }
+    ESP_LOGI(TAG, "[BT] HID host initialized (heap=%lu)", (unsigned long)esp_get_free_heap_size());
 
     xTaskCreatePinnedToCore(bt_scan_task, "bt_scan", 6144, NULL, 3, NULL, 0);
     logKey("[BT] Ready. Press PAIR to connect.");
@@ -1147,12 +1187,12 @@ extern "C" void app_main() {
 
     ESP_LOGI(TAG, "========================================");
     ESP_LOGI(TAG, " KeyBridge  v5.0");
-    ESP_LOGI(TAG, " Web-configurable | USB + BT + BLE");
+    ESP_LOGI(TAG, " Web-configurable | BT Classic + BLE");
     ESP_LOGI(TAG, "----------------------------------------");
     ESP_LOGI(TAG, " Mode:    %s", config.ansi_mode ? "ANSI/VT100" : "Native");
-    ESP_LOGI(TAG, " USB:     %s", config.enable_usb ? "ON" : "off");
-    ESP_LOGI(TAG, " BT:      %s", config.enable_bt_classic ? "ON" : "off");
-    ESP_LOGI(TAG, " BLE:     %s", config.enable_ble ? "ON" : "off");
+    ESP_LOGI(TAG, " BT:      Classic=%s  BLE=%s",
+             config.enable_bt_classic ? "ON" : "off",
+             config.enable_ble ? "ON" : "off");
     if (config.enable_wifi) {
         if (config.sta_ssid[0] != '\0') {
             ESP_LOGI(TAG, " WiFi:    STA>AP (%s, fallback %s)", config.sta_ssid, config.wifi_ssid);
@@ -1166,7 +1206,9 @@ extern "C" void app_main() {
     ESP_LOGI(TAG, "========================================");
 
     if (config.enable_wifi) startWebServer();
+#if CONFIG_SOC_USB_OTG_SUPPORTED
     if (config.enable_usb) startUsbHost();
+#endif
     if (config.enable_bt_classic || config.enable_ble) startBluetooth();
 
     ESP_LOGI(TAG, "Free heap: %lu bytes", (unsigned long)esp_get_free_heap_size());
