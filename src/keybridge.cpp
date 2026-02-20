@@ -15,6 +15,7 @@
 #include "esp_log.h"
 #include "esp_wifi.h"
 #include "esp_task_wdt.h"
+#include "soc/gpio_reg.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/semphr.h"
@@ -116,23 +117,30 @@ void submitKeyReport(uint8_t modifiers, const uint8_t *keys) {
 // GPIO OUTPUT
 // ============================================================
 
-// Scan interface pins (populated in setupScanPins, used by scan response task)
-static int8_t scanAddrPins[7] = {0};
-static int8_t scanReturnPin   = 0;
+// ============================================================
+// KEYBOARD SCAN EMULATION
+// ============================================================
+
+// 128-entry table: true = key at this address is currently "pressed"
+static volatile uint8_t key_state[128] = {0};
+
+// Cached GPIO pin numbers for fast access in scan loop
+static uint8_t scan_addr_pins[7];
+static uint8_t scan_return_pin;
 
 void setupScanPins() {
     // Address inputs (from terminal via TXS0108E)
     for (int i = 0; i < 7; i++) {
-        scanAddrPins[i] = config.pin_addr[i];
-        if (scanAddrPins[i] >= 0) {
-            pinMode(scanAddrPins[i], INPUT);
+        scan_addr_pins[i] = config.pin_addr[i];
+        if (config.pin_addr[i] >= 0) {
+            pinMode(config.pin_addr[i], INPUT);
         }
     }
     // Key Return output (to terminal via 2N7000 MOSFET)
-    scanReturnPin = config.pin_key_return;
-    if (scanReturnPin >= 0) {
-        pinMode(scanReturnPin, OUTPUT);
-        digitalWrite(scanReturnPin, LOW); // MOSFET off = key not pressed
+    scan_return_pin = config.pin_key_return;
+    if (config.pin_key_return >= 0) {
+        pinMode(config.pin_key_return, OUTPUT);
+        digitalWrite(config.pin_key_return, LOW); // MOSFET off = key not pressed
     }
 
     if (config.pin_pair_btn >= 0) pinMode(config.pin_pair_btn, INPUT_PULLUP);
@@ -147,18 +155,78 @@ void setupScanPins() {
     }
 }
 
-// Placeholder — replaced in Task 3 with scan key_state[] updates
-void sendChar(uint8_t ascii) {
-    if (ascii >= 0x20 && ascii < 0x7F) {
-        logKey("TX: 0x%02X '%c' (scan engine not yet active)", ascii, ascii);
-    } else {
-        logKey("TX: 0x%02X (scan engine not yet active)", ascii);
+// Press a key at the given Wyse 50 scan address
+void scanKeyPress(uint8_t addr) {
+    if (addr < 128) {
+        key_state[addr] = 1;
+        logKey("PRESS: addr=0x%02X", addr);
     }
 }
 
+// Release a key at the given Wyse 50 scan address
+void scanKeyRelease(uint8_t addr) {
+    if (addr < 128) {
+        key_state[addr] = 0;
+    }
+}
+
+// Release all keys
+void scanReleaseAll() {
+    memset((void *)key_state, 0, sizeof(key_state));
+}
+
+// Placeholder sendChar/sendString — still called by processKeypress()
+// until Task 4 replaces the HID processing with scan state updates
+void sendChar(uint8_t ascii) {
+    logKey("TX: 0x%02X (scan engine pending HID mapping)", ascii);
+}
+
 void sendString(const char *str) {
-    while (*str) {
-        sendChar((uint8_t)*str++);
+    while (*str) sendChar((uint8_t)*str++);
+}
+
+// ============================================================
+// SCAN RESPONSE TASK (core 0, highest priority)
+// ============================================================
+
+static void scan_response_task(void *arg) {
+    // Remove this task from watchdog (tight loop would trigger it)
+    esp_task_wdt_delete(NULL);
+
+    // Pre-compute GPIO register masks for fast address reading
+    uint32_t addr_masks[7];
+    for (int i = 0; i < 7; i++) {
+        addr_masks[i] = (1UL << scan_addr_pins[i]);
+    }
+    uint32_t return_mask = (1UL << scan_return_pin);
+
+    ESP_LOGI(TAG, "[SCAN] Response task running on core %d", xPortGetCoreID());
+
+    uint32_t yield_counter = 0;
+    while (true) {
+        // Read all GPIOs in one register read
+        uint32_t gpio_in = REG_READ(GPIO_IN_REG);
+
+        // Decode 7-bit address from physical GPIO states
+        uint8_t addr = 0;
+        for (int i = 0; i < 7; i++) {
+            if (gpio_in & addr_masks[i]) {
+                addr |= (1 << i);
+            }
+        }
+
+        // Drive Key Return based on key state table
+        if (key_state[addr]) {
+            REG_WRITE(GPIO_OUT_W1TS_REG, return_mask); // HIGH = MOSFET on = key pressed
+        } else {
+            REG_WRITE(GPIO_OUT_W1TC_REG, return_mask); // LOW = MOSFET off = not pressed
+        }
+
+        // Yield briefly every ~100k iterations to let other core-0 tasks breathe
+        if (++yield_counter >= 100000) {
+            yield_counter = 0;
+            vTaskDelay(1);
+        }
     }
 }
 
@@ -1163,6 +1231,10 @@ extern "C" void app_main() {
     }
 
     setupScanPins();
+
+    // Start scan response on core 0 at highest priority
+    xTaskCreatePinnedToCore(scan_response_task, "scan", 4096, NULL,
+                            configMAX_PRIORITIES - 1, NULL, 0);
 
     ESP_LOGI(TAG, "========================================");
     ESP_LOGI(TAG, " KeyBridge  v5.0");
