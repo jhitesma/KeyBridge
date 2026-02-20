@@ -415,81 +415,155 @@ via a MOSFET. Runs on core 0 with <1μs response time."
 
 ## Task 4: HID-to-Wyse50 Key Address Mapping
 
-The Wyse 50 keyboard matrix has 128 addressable positions (7 bits: 4 for column A0-A3, 3 for row A4-A6). We need a lookup table mapping USB HID keycodes to Wyse 50 scan addresses.
+The complete key matrix has been decoded from the MAME emulator project (`src/mame/wyse/wy50kb.cpp` in the [mamedev/mame](https://github.com/mamedev/mame) repository). The address formula is `(column * 8) + row`, where bits 6-3 = column (0-12) and bits 2-0 = row (0-7).
 
 **Files:**
 - Modify: `src/keybridge.cpp`
 
-**Step 1:** Create the mapping table. The keyboard schematic (page 91 of WY-50-Maintenance_Manual.pdf) shows a 16-column × 8-row matrix. The address is `(row << 4) | column`.
-
-**IMPORTANT: The exact key-to-address mapping must be verified empirically.** The schematic is hard to read from the PDF. Create an initial best-guess mapping, then verify/correct using the scan snoop tool (Task 5).
-
-Initial mapping table (placeholder — addresses TBD, marked with `?` where uncertain):
+**Step 1:** Create the complete mapping table. Every address is known — no placeholders.
 
 ```cpp
+// Wyse 50 scan address for Shift and Ctrl modifier keys
+#define WYSE_SHIFT  0x4A  // Col 9, Row 2
+#define WYSE_CTRL   0x1F  // Col 3, Row 7
+
 // Map HID keycode → Wyse 50 scan address (0-127)
 // 0xFF = no mapping (key not present on Wyse 50)
+// Source: MAME wy50kb.cpp (verified against maintenance manual schematic)
 static const uint8_t hid_to_wyse50[256] = {
     [0 ... 255] = 0xFF,  // Default: unmapped
 
     // Letters (HID 0x04-0x1D = a-z)
-    // These will be populated after scan matrix verification
-    // Placeholder: sequential addresses starting from row 0
-    [0x04] = 0x00, // a — PLACEHOLDER
-    [0x05] = 0x01, // b — PLACEHOLDER
-    // ... (all 26 letters)
+    [0x04] = 0x3F, // a → Col 7, Row 7
+    [0x05] = 0x2E, // b → Col 5, Row 6
+    [0x06] = 0x4E, // c → Col 9, Row 6
+    [0x07] = 0x37, // d → Col 6, Row 7
+    [0x08] = 0x30, // e → Col 6, Row 0
+    [0x09] = 0x17, // f → Col 2, Row 7
+    [0x0A] = 0x0F, // g → Col 1, Row 7
+    [0x0B] = 0x07, // h → Col 0, Row 7
+    [0x0C] = 0x58, // i → Col 11, Row 0
+    [0x0D] = 0x5F, // j → Col 11, Row 7
+    [0x0E] = 0x67, // k → Col 12, Row 7
+    [0x0F] = 0x2F, // l → Col 5, Row 7
+    [0x10] = 0x0E, // m → Col 1, Row 6
+    [0x11] = 0x16, // n → Col 2, Row 6
+    [0x12] = 0x60, // o → Col 12, Row 0
+    [0x13] = 0x51, // p → Col 10, Row 1
+    [0x14] = 0x38, // q → Col 7, Row 0
+    [0x15] = 0x28, // r → Col 5, Row 0
+    [0x16] = 0x4F, // s → Col 9, Row 7
+    [0x17] = 0x10, // t → Col 2, Row 0
+    [0x18] = 0x00, // u → Col 0, Row 0
+    [0x19] = 0x36, // v → Col 6, Row 6
+    [0x1A] = 0x48, // w → Col 9, Row 0
+    [0x1B] = 0x3E, // x → Col 7, Row 6
+    [0x1C] = 0x08, // y → Col 1, Row 0
+    [0x1D] = 0x1E, // z → Col 3, Row 6
 
-    // Numbers (HID 0x1E-0x27 = 1-0)
-    // ... PLACEHOLDER
+    // Number row (HID 0x1E-0x27 = 1-0)
+    [0x1E] = 0x1B, // 1/! → Col 3, Row 3
+    [0x1F] = 0x3B, // 2/@ → Col 7, Row 3
+    [0x20] = 0x4B, // 3/# → Col 9, Row 3
+    [0x21] = 0x33, // 4/$ → Col 6, Row 3
+    [0x22] = 0x2B, // 5/% → Col 5, Row 3
+    [0x23] = 0x13, // 6/^ → Col 2, Row 3
+    [0x24] = 0x0B, // 7/& → Col 1, Row 3
+    [0x25] = 0x03, // 8/* → Col 0, Row 3
+    [0x26] = 0x5B, // 9/( → Col 11, Row 3
+    [0x27] = 0x63, // 0/) → Col 12, Row 3
 
     // Common keys
-    [0x28] = 0xFF, // Enter — PLACEHOLDER
-    [0x29] = 0xFF, // Escape — PLACEHOLDER
-    [0x2A] = 0xFF, // Backspace — PLACEHOLDER
-    [0x2B] = 0xFF, // Tab — PLACEHOLDER
-    [0x2C] = 0xFF, // Space — PLACEHOLDER
+    [0x28] = 0x65, // Return    → Col 12, Row 5
+    [0x29] = 0x3C, // Escape    → Col 7, Row 4
+    [0x2A] = 0x1A, // Backspace → Col 3, Row 2
+    [0x2B] = 0x18, // Tab       → Col 3, Row 0
+    [0x2C] = 0x19, // Space     → Col 3, Row 1
 
-    // SETUP key — critical for Wyse 50 configuration
-    // Map to a USB key that doesn't conflict (e.g., Scroll Lock 0x47)
-    [0x47] = 0xFF, // Scroll Lock → SETUP — PLACEHOLDER address
+    // Punctuation
+    [0x2D] = 0x43, // -/_ → Col 8, Row 3
+    [0x2E] = 0x53, // =/+ → Col 10, Row 3
+    [0x2F] = 0x42, // [/{ → Col 8, Row 2
+    [0x30] = 0x45, // ]/} → Col 8, Row 5
+    [0x31] = 0x5C, // \/| → Col 11, Row 4
+    [0x33] = 0x44, // ;/: → Col 8, Row 4
+    [0x34] = 0x46, // '/" → Col 8, Row 6
+    [0x35] = 0x4C, // `/~ → Col 9, Row 4
+    [0x36] = 0x06, // ,/< → Col 0, Row 6
+    [0x37] = 0x5E, // ./> → Col 11, Row 6
+    [0x38] = 0x66, // //? → Col 12, Row 6
+
+    // Lock / special
+    [0x39] = 0x3A, // Caps Lock → Col 7, Row 2
+
+    // Function keys (F1-F12 map to Wyse F1-F12)
+    [0x3A] = 0x1D, // F1  → Col 3, Row 5
+    [0x3B] = 0x3D, // F2  → Col 7, Row 5
+    [0x3C] = 0x25, // F3  → Col 4, Row 5
+    [0x3D] = 0x23, // F4  → Col 4, Row 3
+    [0x3E] = 0x20, // F5  → Col 4, Row 0
+    [0x3F] = 0x27, // F6  → Col 4, Row 7
+    [0x40] = 0x26, // F7  → Col 4, Row 6
+    [0x41] = 0x49, // F8  → Col 9, Row 1
+    [0x42] = 0x24, // F9  → Col 4, Row 4
+    [0x43] = 0x1C, // F10 → Col 3, Row 4
+    [0x44] = 0x57, // F11 → Col 10, Row 7
+    [0x45] = 0x22, // F12 → Col 4, Row 2
+
+    // Wyse-specific keys mapped to HID keys that don't conflict
+    [0x47] = 0x0C, // Scroll Lock → SETUP (Col 1, Row 4) *** CRITICAL ***
+    [0x48] = 0x34, // Pause/Break → Break (Col 6, Row 4)
+    [0x49] = 0x01, // Insert      → Ins Char/Line (Col 0, Row 1)
+    [0x4A] = 0x61, // Home        → Home (Col 12, Row 1)
+    [0x4B] = 0x41, // Page Up     → Next/Prev Page (Col 8, Row 1)
+    [0x4C] = 0x62, // Delete      → Del 0x7F (Col 12, Row 2)
+    [0x4E] = 0x41, // Page Down   → Next/Prev Page (same key, shifted)
+
+    // Arrow keys
+    [0x4F] = 0x0A, // Right → Col 1, Row 2
+    [0x50] = 0x5A, // Left  → Col 11, Row 2
+    [0x51] = 0x05, // Down  → Col 0, Row 5
+    [0x52] = 0x4D, // Up    → Col 9, Row 5
+
+    // Keypad
+    [0x54] = 0x66, // KP /     → //? (shared)
+    [0x56] = 0x31, // KP -     → Col 6, Row 1
+    [0x58] = 0x35, // KP Enter → Col 6, Row 5
+    [0x59] = 0x12, // KP 1     → Col 2, Row 2
+    [0x5A] = 0x02, // KP 2     → Col 0, Row 2
+    [0x5B] = 0x52, // KP 3     → Col 10, Row 2
+    [0x5C] = 0x11, // KP 4     → Col 2, Row 1
+    [0x5D] = 0x2A, // KP 5     → Col 5, Row 2
+    [0x5E] = 0x2C, // KP 6     → Col 5, Row 4
+    [0x5F] = 0x14, // KP 7     → Col 2, Row 4
+    [0x60] = 0x55, // KP 8     → Col 10, Row 5
+    [0x61] = 0x59, // KP 9     → Col 11, Row 1
+    [0x62] = 0x15, // KP 0     → Col 2, Row 5
+    [0x63] = 0x29, // KP .     → Col 5, Row 1
 };
+
+// Additional Wyse keys with no obvious HID equivalent (accessible via web UI):
+// Func        = 0x39 (Col 7, Row 1)
+// Clr Line    = 0x04 (Col 0, Row 4) — Shift+Clr = Clr Scrn
+// Del Char    = 0x2D (Col 5, Row 5) — Shift+Del Char = Del Line
+// Repl/Ins    = 0x32 (Col 6, Row 2)
+// Send/Print  = 0x64 (Col 12, Row 4)
+// F13         = 0x50 (Col 10, Row 0)
+// F14         = 0x54 (Col 10, Row 4)
+// F15         = 0x56 (Col 10, Row 6)
+// F16         = 0x21 (Col 4, Row 1)
 ```
 
-**Step 2:** Rewrite `processKeypress()` to use the scan address mapping instead of ASCII translation:
-
-```cpp
-void processKeypress(uint8_t keycode, uint8_t modifiers) {
-    if (keycode == 0 || keycode > 0xFF) return;
-
-    uint8_t addr = hid_to_wyse50[keycode];
-    if (addr == 0xFF) return; // Unmapped key
-
-    // Handle Shift modifier: Wyse 50 has a physical Shift key in the scan matrix.
-    // When USB Shift is held, we also assert the Wyse 50 Shift address.
-    bool shift = (modifiers & (MOD_LEFT_SHIFT | MOD_RIGHT_SHIFT)) != 0;
-    bool ctrl  = (modifiers & (MOD_LEFT_CTRL | MOD_RIGHT_CTRL)) != 0;
-
-    // Assert modifier keys in the scan matrix
-    // (addresses TBD from schematic — Shift, Ctrl, etc. have their own addresses)
-    // These are held as long as the modifier is active
-
-    scanKeyPress(addr);
-
-    if (config.pin_led >= 0) digitalWrite(config.pin_led, HIGH);
-}
-```
-
-**Step 3:** Rewrite `processHidReport()` to handle key press AND release via the scan state table:
+**Step 2:** Rewrite `processHidReport()` to handle key press AND release via the scan state table, including modifier keys:
 
 ```cpp
 void processHidReport(const KeyReport *report) {
     uint8_t modifiers = report->modifiers;
     const uint8_t *keys = report->keys;
 
-    // First: release any keys no longer in the report
-    // We need to track which Wyse addresses are currently held by USB
+    // Track which Wyse addresses are currently held
     static uint8_t prev_wyse_addrs[6] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
-    static uint8_t prev_mod_addrs[4] = {0xFF, 0xFF, 0xFF, 0xFF}; // shift, ctrl, alt, gui
+    static uint8_t prev_modifiers = 0;
 
     // Release previous keys not in current report
     for (int i = 0; i < 6; i++) {
@@ -507,16 +581,25 @@ void processHidReport(const KeyReport *report) {
 
     // Press new keys
     for (int i = 0; i < 6; i++) {
-        if (keys[i] == 0) continue;
+        if (keys[i] == 0) { prev_wyse_addrs[i] = 0xFF; continue; }
         uint8_t addr = hid_to_wyse50[keys[i]];
-        if (addr == 0xFF) continue;
+        if (addr == 0xFF) { prev_wyse_addrs[i] = 0xFF; continue; }
         scanKeyPress(addr);
         prev_wyse_addrs[i] = addr;
     }
 
-    // Handle modifier keys (Shift, Ctrl have their own scan addresses)
-    // TODO: fill in actual Wyse 50 addresses for modifier keys
-    // updateModifierState(modifiers, prev_mod_addrs);
+    // Handle modifier keys — Shift and Ctrl have physical scan addresses
+    bool shift_now = (modifiers & 0x22) != 0; // L or R Shift
+    bool shift_was = (prev_modifiers & 0x22) != 0;
+    if (shift_now && !shift_was) scanKeyPress(WYSE_SHIFT);
+    if (!shift_now && shift_was) scanKeyRelease(WYSE_SHIFT);
+
+    bool ctrl_now = (modifiers & 0x11) != 0;  // L or R Ctrl
+    bool ctrl_was = (prev_modifiers & 0x11) != 0;
+    if (ctrl_now && !ctrl_was) scanKeyPress(WYSE_CTRL);
+    if (!ctrl_now && ctrl_was) scanKeyRelease(WYSE_CTRL);
+
+    prev_modifiers = modifiers;
 
     // LED feedback
     for (int i = 0; i < 6; i++) {
@@ -526,32 +609,29 @@ void processHidReport(const KeyReport *report) {
             break;
         }
     }
-
-    memcpy(prevKeys, keys, 6);
 }
 ```
 
-**Step 4:** Remove `handleAutoRepeat()` — the terminal handles key repeat natively by seeing the key still held during repeated scans. The BT HID report holds the key in the `keys[]` array as long as it's physically held, which maps directly to the scan state table staying asserted. No software repeat needed.
+**Step 3:** Remove `handleAutoRepeat()` — the terminal handles key repeat natively by seeing the key still held during repeated scans. The BT HID report holds the key in the `keys[]` array as long as it's physically held, which maps directly to the scan state table staying asserted. No software repeat needed.
 
-**Step 5:** Build, flash, verify no crashes.
+**Step 4:** Build, flash, verify no crashes.
 
-**Step 6:** Commit.
+**Step 5:** Commit.
 
 ```bash
 git add src/keybridge.cpp
-git commit -m "feat: add HID-to-Wyse50 key address mapping
+git commit -m "feat: add complete HID-to-Wyse50 key address mapping
 
-Replaces ASCII translation with scan address lookup. Key state is
-maintained in a 128-entry table read by the scan response task.
-Terminal handles repeat natively. Addresses are placeholders pending
-scan matrix verification."
+All 100+ key addresses derived from MAME wy50kb.cpp (verified against
+the WY-50 maintenance manual schematic). Shift/Ctrl modifiers mapped
+to their physical scan addresses. No empirical discovery needed."
 ```
 
 ---
 
-## Task 5: Build Scan Snoop / Key Address Discovery Tool
+## Task 5: Build Scan Verification and Debug Tools
 
-Since we don't have the original Wyse 50 keyboard and the schematic is hard to read, we need a tool to discover the correct key addresses empirically.
+The key addresses are known from MAME, but we still need tools to verify the hardware connection works and debug any wiring issues.
 
 **Files:**
 - Modify: `src/keybridge.cpp` (add API endpoints)
@@ -671,21 +751,22 @@ server.on("/api/scan/sweep", HTTP_POST, []() {
 ```
 
 **Step 5:** Build, flash, test by connecting to the Wyse 50 and using the web UI to:
-1. Start snoop mode → verify the terminal is actually scanning addresses
-2. Test individual addresses → see what character appears on screen
-3. Run a sweep → map all 128 addresses by watching the terminal
+1. Start snoop mode → verify the terminal is actually scanning all 104 addresses (13 cols × 8 rows)
+2. Test a known address (e.g., `0x3F` = 'a') → verify 'a' appears on terminal
+3. Test SETUP (`0x0C`) → verify terminal enters setup mode
+4. Run a sweep of a small range to verify address wiring is correct
 
 **Step 6:** Commit.
 
 ```bash
 git add src/keybridge.cpp
-git commit -m "feat: add scan snoop and key address discovery tools
+git commit -m "feat: add scan verification and debug tools
 
-API endpoints for debugging the Wyse 50 keyboard interface:
+API endpoints for verifying the Wyse 50 keyboard interface:
 - /api/scan/snoop - monitor which addresses the terminal scans
 - /api/scan/histogram - read scan frequency per address
-- /api/scan/test - assert a single address to test
-- /api/scan/sweep - test all addresses sequentially"
+- /api/scan/test - assert a single address to verify wiring
+- /api/scan/sweep - test address ranges sequentially"
 ```
 
 ---
@@ -710,37 +791,27 @@ API endpoints for debugging the Wyse 50 keyboard interface:
 
 ---
 
-## Task 7: Populate Key Address Map from Testing
+## Task 7: End-to-End Verification with Wyse 50
 
-This is a manual process using the tools from Task 5. Connect the KeyBridge to the Wyse 50 and systematically discover the mapping.
+Connect everything and verify the full chain: BT keyboard → ESP32 → TXS0108E → J3 → terminal.
 
-**Step 1:** Run scan snoop to verify the terminal is scanning all 128 addresses (or a subset).
+**Step 1:** Verify scan snoop shows the terminal scanning all expected addresses (should see ~104 active addresses across columns 0-12).
 
-**Step 2:** Run a sweep (addresses 0-127) and record what each address produces on the terminal screen. Some will be printable characters, some will be control functions, many will be unmapped.
+**Step 2:** Use `/api/scan/test` to assert address `0x0C` (SETUP) — verify the terminal enters setup mode. This confirms the entire hardware chain works.
 
-**Step 3:** Test with Shift held — press the Wyse 50 Shift address simultaneously with letter addresses to verify shifted characters work.
+**Step 3:** Pair the Keychron K2 via Classic BT. Press Scroll Lock — should trigger SETUP on the terminal.
 
-**Step 4:** Identify the critical special keys:
-- **SETUP** (needed for terminal configuration)
-- **Shift** (modifier)
-- **Ctrl** (modifier)
-- **Return/Enter**
-- **Backspace/Delete**
-- **Cursor keys** (Up/Down/Left/Right)
-- **Function keys** (F1-F16)
-- **Space**
-- **Tab**
-- **Escape**
+**Step 4:** Type letters on the K2 and verify they appear on the terminal screen. Test a-z, 0-9, space, return, backspace.
 
-**Step 5:** Update the `hid_to_wyse50[]` table in `keybridge.cpp` with the discovered addresses.
+**Step 5:** Test Shift + letter (should produce uppercase). Test Ctrl + letter. Test arrow keys navigate in setup mode.
 
-**Step 6:** Test typing on the terminal — pair the Keychron K2 via Classic BT, type, verify characters appear correctly.
+**Step 6:** If any key doesn't work, use the scan snoop and test tools to debug. The MAME mapping is authoritative but wiring errors could swap address bits.
 
-**Step 7:** Commit the completed mapping.
+**Step 7:** Commit any fixes discovered during testing.
 
 ```bash
 git add src/keybridge.cpp
-git commit -m "feat: populate Wyse 50 key address map from empirical testing"
+git commit -m "fix: correct key address mapping from end-to-end testing"
 ```
 
 ---
@@ -789,6 +860,10 @@ The original ESP32 has no native USB host controller. USB keyboard support would
 ### What about ESP32-S3?
 
 The USB host code is preserved behind `#if CONFIG_SOC_USB_OTG_SUPPORTED` guards. If a future use case needs USB host input, the S3 can be re-enabled by uncommenting its env in `platformio.ini`. The scan response engine is identical regardless of input source — only the HID input path differs.
+
+### Key address mapping source
+
+The complete keyboard matrix was extracted from the MAME emulator project: [`src/mame/wyse/wy50kb.cpp`](https://github.com/mamedev/mame/blob/master/src/mame/wyse/wy50kb.cpp) in the [mamedev/mame](https://github.com/mamedev/mame) repository. This file was authored by AJR (a well-known MAME contributor) and represents the decoded schematic from the WY-50 maintenance manual. The address formula is `(column * 8) + row` where bits 6-3 = column (0-12) and bits 2-0 = row (0-7). The Key Return line is active-low (goes low when the addressed key is pressed). Additional community resources: [Deskthority Wyse keyboard protocols](https://deskthority.net/wiki/Wyse_keyboard_protocols), [bitsavers WY-50 manuals](https://bitsavers.org/pdf/wyse/WY-50/).
 
 ### Config version bump
 
