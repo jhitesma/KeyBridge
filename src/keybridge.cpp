@@ -1006,6 +1006,7 @@ void startWebServer() {
         doc["bt_connected"]  = (bool)bt_keyboard_connected;
         doc["ansi_mode"]     = config.ansi_mode;
         doc["uptime_sec"]    = millis() / 1000;
+        doc["free_heap"]     = esp_get_free_heap_size();
         doc["wifi_mode"]     = wifi_sta_mode ? "STA" : "AP";
         doc["wifi_ip"]       = wifi_sta_mode ? WiFi.localIP().toString() : WiFi.softAPIP().toString();
         doc["hostname"]      = config.hostname;

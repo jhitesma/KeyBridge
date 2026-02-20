@@ -45,16 +45,11 @@ button{padding:7px 18px;border:none;border-radius:4px;cursor:pointer;font-size:.
 .btn-danger{background:#8b0000;color:#fff}
 .btn-sm{padding:4px 10px;font-size:.8em}
 .actions{display:flex;gap:8px;margin-top:16px;flex-wrap:wrap}
-table{width:100%;border-collapse:collapse;font-size:.82em}
-th{text-align:left;padding:6px 8px;border-bottom:2px solid var(--border);color:var(--dim);font-weight:500}
-td{padding:5px 8px;border-bottom:1px solid var(--border)}
-td input{background:var(--input-bg);border:1px solid var(--border);color:var(--text);padding:3px 6px;border-radius:3px;font-size:.82em}
-td input[type=text]{width:100%}
-td input[type=number]{width:50px}
 .mono{font-family:'SF Mono',Consolas,monospace;font-size:.8em}
 .toast{position:fixed;bottom:20px;right:20px;padding:10px 20px;border-radius:6px;font-size:.85em;z-index:999;transition:opacity .3s;opacity:0;pointer-events:none}
 .toast.show{opacity:1}.toast-ok{background:var(--ok);color:#000}.toast-err{background:var(--hi);color:#fff}
 #keyLog{background:var(--input-bg);border:1px solid var(--border);border-radius:4px;padding:8px;font-family:monospace;font-size:.8em;height:120px;overflow-y:auto;white-space:pre;color:var(--ok);margin-top:8px}
+#histogramBox{background:var(--input-bg);border:1px solid var(--border);border-radius:4px;padding:8px;font-family:monospace;font-size:.75em;max-height:300px;overflow-y:auto;white-space:pre;color:var(--ok);margin-top:8px}
 @media(max-width:600px){.row{flex-direction:column;align-items:flex-start}.row label{min-width:auto}}
 #loginScreen{display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:60vh}
 .login-card{background:var(--card);border-radius:8px;padding:32px;text-align:center;width:100%;max-width:360px}
@@ -77,20 +72,19 @@ td input[type=number]{width:50px}
 
 <div id="mainUI" style="display:none">
 <h1>&#x2328; KeyBridge</h1>
-<p class="subtitle">USB / Bluetooth &rarr; Parallel ASCII Terminal Interface</p>
+<p class="subtitle">Bluetooth &rarr; Wyse 50 Keyboard Scan Matrix</p>
 
 <div class="status-bar" id="statusBar">
-  <span><span class="status-dot dot-off" id="dotUsb"></span>USB</span>
   <span><span class="status-dot dot-off" id="dotBt"></span>Bluetooth</span>
   <span><span class="status-dot dot-off" id="dotWifi"></span>WiFi</span>
-  <span>Mode: <strong id="modeLabel">—</strong></span>
+  <span>Uptime: <strong id="uptimeLabel">&mdash;</strong></span>
+  <span>Heap: <strong id="heapLabel">&mdash;</strong></span>
 </div>
 
 <div class="tabs">
   <button class="tab active" onclick="showTab('general',event)">General</button>
   <button class="tab" onclick="showTab('pins',event)">Pins</button>
-  <button class="tab" onclick="showTab('timing',event)">Timing</button>
-  <button class="tab" onclick="showTab('keys',event)">Key Mappings</button>
+  <button class="tab" onclick="showTab('scan',event)">Scan Test</button>
   <button class="tab" onclick="showTab('wifi',event)">Settings</button>
   <button class="tab" onclick="showTab('monitor',event)">Monitor</button>
 </div>
@@ -98,35 +92,13 @@ td input[type=number]{width:50px}
 <!-- GENERAL TAB -->
 <div class="panel active" id="panel-general">
   <div class="group">
-    <div class="group-title">Terminal Mode</div>
-    <div class="row">
-      <label>Mode</label>
-      <select id="ansi_mode">
-        <option value="false">Native</option>
-        <option value="true">ANSI / VT100</option>
-      </select>
-    </div>
-    <div class="row">
-      <label>Use hardware jumper</label>
-      <input type="checkbox" id="use_mode_jumper">
-      <span class="hint">Overrides software setting when enabled</span>
-    </div>
-    <div class="row">
-      <label>Strobe polarity</label>
-      <select id="strobe_active_low">
-        <option value="true">Active LOW (idle high)</option>
-        <option value="false">Active HIGH (idle low)</option>
-      </select>
-    </div>
-  </div>
-
-  <div class="group">
     <div class="group-title">Features</div>
-    <div class="row"><label>USB Host</label><input type="checkbox" id="feat_usb"></div>
     <div class="row"><label>Bluetooth Classic</label><input type="checkbox" id="feat_bt"></div>
     <div class="row"><label>Bluetooth LE</label><input type="checkbox" id="feat_ble"></div>
     <div class="row"><label>WiFi config server</label><input type="checkbox" id="feat_wifi">
       <span class="hint">Disabling requires reflash to re-enable</span></div>
+    <div class="row"><label>Use hardware jumper</label><input type="checkbox" id="use_mode_jumper">
+      <span class="hint">Mode jumper input on GPIO below</span></div>
   </div>
 
   <div class="group">
@@ -144,75 +116,88 @@ td input[type=number]{width:50px}
 <!-- PINS TAB -->
 <div class="panel" id="panel-pins">
   <div class="group">
-    <div class="group-title">Data Output (to terminal via 74HCT245)</div>
-    <div class="row"><label>D0 (bit 0, LSB)</label><input type="number" id="pin_d0" min="-1" max="48"></div>
-    <div class="row"><label>D1 (bit 1)</label><input type="number" id="pin_d1" min="-1" max="48"></div>
-    <div class="row"><label>D2 (bit 2)</label><input type="number" id="pin_d2" min="-1" max="48"></div>
-    <div class="row"><label>D3 (bit 3)</label><input type="number" id="pin_d3" min="-1" max="48"></div>
-    <div class="row"><label>D4 (bit 4)</label><input type="number" id="pin_d4" min="-1" max="48"></div>
-    <div class="row"><label>D5 (bit 5)</label><input type="number" id="pin_d5" min="-1" max="48"></div>
-    <div class="row"><label>D6 (bit 6, MSB)</label><input type="number" id="pin_d6" min="-1" max="48"></div>
-    <div class="row"><label>Strobe</label><input type="number" id="pin_strobe" min="-1" max="48"></div>
+    <div class="group-title">Scan Address Inputs (from terminal via level shifter)</div>
+    <p class="hint" style="margin-bottom:8px">7-bit address from the Wyse 50 keyboard connector J3. Active-high after TXS0108E level shifting (5V &rarr; 3.3V).</p>
+    <div class="row"><label>Addr 0 (bit 0, LSB)</label><input type="number" id="pin_addr0" min="-1" max="39"></div>
+    <div class="row"><label>Addr 1 (bit 1)</label><input type="number" id="pin_addr1" min="-1" max="39"></div>
+    <div class="row"><label>Addr 2 (bit 2)</label><input type="number" id="pin_addr2" min="-1" max="39"></div>
+    <div class="row"><label>Addr 3 (bit 3)</label><input type="number" id="pin_addr3" min="-1" max="39"></div>
+    <div class="row"><label>Addr 4 (bit 4)</label><input type="number" id="pin_addr4" min="-1" max="39"></div>
+    <div class="row"><label>Addr 5 (bit 5)</label><input type="number" id="pin_addr5" min="-1" max="39"></div>
+    <div class="row"><label>Addr 6 (bit 6, MSB)</label><input type="number" id="pin_addr6" min="-1" max="39"></div>
+  </div>
+  <div class="group">
+    <div class="group-title">Key Return Output</div>
+    <div class="row"><label>Key Return</label><input type="number" id="pin_key_return" min="-1" max="39">
+      <span class="hint">Active-high GPIO &rarr; 2N7000 inverts to active-low for terminal</span></div>
   </div>
   <div class="group">
     <div class="group-title">Control Inputs</div>
-    <div class="row"><label>PAIR button</label><input type="number" id="pin_pair_btn" min="-1" max="48"></div>
-    <div class="row"><label>MODE jumper</label><input type="number" id="pin_mode_jp" min="-1" max="48"></div>
+    <div class="row"><label>PAIR button</label><input type="number" id="pin_pair_btn" min="-1" max="39"></div>
+    <div class="row"><label>MODE jumper</label><input type="number" id="pin_mode_jp" min="-1" max="39"></div>
   </div>
   <div class="group">
     <div class="group-title">Status LEDs (-1 = disabled)</div>
-    <div class="row"><label>Activity LED</label><input type="number" id="pin_led" min="-1" max="48"></div>
-    <div class="row"><label>Bluetooth LED</label><input type="number" id="pin_bt_led" min="-1" max="48"></div>
+    <div class="row"><label>Activity LED</label><input type="number" id="pin_led" min="-1" max="39"></div>
+    <div class="row"><label>Bluetooth LED</label><input type="number" id="pin_bt_led" min="-1" max="39"></div>
   </div>
   <div class="actions">
     <button class="btn-primary" onclick="saveAll()">&#x1F4BE; Save &amp; Apply</button>
   </div>
-  <p class="hint" style="margin-top:8px">Pin changes require reboot to take effect.</p>
+  <p class="hint" style="margin-top:8px">Pin changes require reboot. Avoid GPIOs 6-11 (internal flash on ESP32).</p>
 </div>
 
-<!-- TIMING TAB -->
-<div class="panel" id="panel-timing">
+<!-- SCAN TEST TAB -->
+<div class="panel" id="panel-scan">
   <div class="group">
-    <div class="group-title">Strobe Timing</div>
-    <div class="row"><label>Data setup (µs)</label><input type="number" id="data_setup_us" min="1" max="100"></div>
-    <div class="row"><label>Strobe pulse (µs)</label><input type="number" id="strobe_pulse_us" min="1" max="100"></div>
-    <div class="row"><label>Inter-char delay (µs)</label><input type="number" id="inter_char_delay_us" min="10" max="5000">
-      <span class="hint">Between chars in escape sequences</span></div>
-  </div>
-  <div class="group">
-    <div class="group-title">Auto-Repeat</div>
-    <div class="row"><label>Initial delay (ms)</label><input type="number" id="repeat_delay_ms" min="100" max="2000"></div>
-    <div class="row"><label>Repeat rate (ms)</label><input type="number" id="repeat_rate_ms" min="20" max="500">
-      <span class="hint">Lower = faster (67ms ≈ 15/sec)</span></div>
-  </div>
-  <div class="actions">
-    <button class="btn-primary" onclick="saveAll()">&#x1F4BE; Save &amp; Apply</button>
-  </div>
-</div>
-
-<!-- KEY MAPPINGS TAB -->
-<div class="panel" id="panel-keys">
-  <div class="group">
-    <div class="group-title">Special Key Mappings</div>
-    <p class="hint" style="margin-bottom:8px">Define what each special key sends. Sequences are hex-encoded bytes (e.g. "1b5b41" = ESC [ A). Use the readable column as a guide.</p>
-    <table>
-      <thead>
-        <tr><th>On</th><th>Label</th><th>HID Code</th><th>Native Seq (hex)</th><th>Readable</th><th>ANSI Seq (hex)</th><th>Readable</th><th></th></tr>
-      </thead>
-      <tbody id="keyTableBody"></tbody>
-    </table>
+    <div class="group-title">Address Test</div>
+    <p class="hint" style="margin-bottom:8px">Assert a single scan address to verify the terminal sees the key. Key Return goes active for the specified duration.</p>
+    <div class="row">
+      <label>Address (0-127)</label>
+      <input type="number" id="scanTestAddr" min="0" max="127" value="12" style="width:70px" oninput="updateScanInfo()">
+      <span class="hint mono" id="scanTestInfo">col=1 row=4</span>
+    </div>
+    <div class="row">
+      <label>Duration (ms)</label>
+      <input type="number" id="scanTestDuration" min="50" max="5000" value="200" style="width:80px">
+    </div>
     <div class="actions" style="margin-top:8px">
-      <button class="btn-secondary btn-sm" onclick="addKeyRow()">+ Add Key</button>
-      <button class="btn-primary" onclick="saveAll()">&#x1F4BE; Save &amp; Apply</button>
+      <button class="btn-primary btn-sm" onclick="scanTest()">Test Address</button>
     </div>
   </div>
+
   <div class="group" style="margin-top:12px">
-    <div class="group-title">Presets</div>
-    <div class="actions">
-      <button class="btn-secondary btn-sm" onclick="loadPreset('wyse50')">Wyse 50/50+</button>
-      <button class="btn-secondary btn-sm" onclick="loadPreset('vt100')">VT100</button>
-      <button class="btn-secondary btn-sm" onclick="loadPreset('adm3a')">ADM-3A</button>
+    <div class="group-title">Address Sweep</div>
+    <p class="hint" style="margin-bottom:8px">Sequentially assert a range of addresses. Watch the terminal to see which produce visible characters.</p>
+    <div class="row">
+      <label>Start address</label>
+      <input type="number" id="sweepStart" min="0" max="127" value="0" style="width:70px">
     </div>
+    <div class="row">
+      <label>End address</label>
+      <input type="number" id="sweepEnd" min="0" max="127" value="103" style="width:70px">
+    </div>
+    <div class="row">
+      <label>Hold (ms)</label>
+      <input type="number" id="sweepHold" min="50" max="5000" value="300" style="width:80px">
+    </div>
+    <div class="row">
+      <label>Gap (ms)</label>
+      <input type="number" id="sweepGap" min="50" max="5000" value="200" style="width:80px">
+    </div>
+    <div class="actions" style="margin-top:8px">
+      <button class="btn-secondary btn-sm" onclick="scanSweep()">Run Sweep</button>
+    </div>
+  </div>
+
+  <div class="group" style="margin-top:12px">
+    <div class="group-title">Scan Snoop</div>
+    <p class="hint" style="margin-bottom:8px">Monitor which addresses the terminal is scanning. Start snoop, wait a few seconds, then read the histogram to see active scan addresses.</p>
+    <div class="actions">
+      <button class="btn-secondary btn-sm" onclick="snoopStart()">Start Snoop</button>
+      <button class="btn-secondary btn-sm" onclick="snoopRead()">Read Histogram</button>
+    </div>
+    <div id="histogramBox" style="display:none">Waiting...</div>
   </div>
 </div>
 
@@ -261,19 +246,10 @@ td input[type=number]{width:50px}
 <div class="panel" id="panel-monitor">
   <div class="group">
     <div class="group-title">Live Key Monitor</div>
-    <p class="hint">Shows characters as they're sent to the terminal (updates every second).</p>
+    <p class="hint">Shows key events as they are processed (updates every second).</p>
     <div id="keyLog">Waiting for keypresses...</div>
     <div class="actions" style="margin-top:8px">
       <button class="btn-secondary btn-sm" onclick="clearLog()">Clear</button>
-    </div>
-  </div>
-  <div class="group" style="margin-top:12px">
-    <div class="group-title">Test Output</div>
-    <p class="hint">Type a character to send directly to the terminal for testing.</p>
-    <div class="row">
-      <label>ASCII char or hex</label>
-      <input type="text" id="testChar" maxlength="4" placeholder="A or 1b" style="width:80px">
-      <button class="btn-secondary btn-sm" onclick="sendTest()">Send</button>
     </div>
   </div>
 </div>
@@ -306,7 +282,6 @@ function showLogin() {
   document.getElementById('loginScreen').style.display = 'flex';
   document.getElementById('mainUI').style.display = 'none';
   if (logPoll) { clearInterval(logPoll); logPoll = null; }
-  // Fetch device name for login screen
   fetch('/api/status').then(r => r.json()).then(s => {
     document.getElementById('loginDeviceName').textContent = s.device_name || s.hostname || 'KeyBridge';
   }).catch(() => {});
@@ -358,30 +333,18 @@ async function loadConfig() {
 
 function populateForm() {
   // General
-  sel('ansi_mode', cfg.terminal?.ansi_mode);
   chk('use_mode_jumper', cfg.terminal?.use_mode_jumper);
-  sel('strobe_active_low', cfg.terminal?.strobe_active_low);
-  chk('feat_usb', cfg.features?.usb);
   chk('feat_bt', cfg.features?.bt_classic);
   chk('feat_ble', cfg.features?.ble);
   chk('feat_wifi', cfg.features?.wifi);
 
   // Pins
-  val('pin_d0', cfg.pins?.d0); val('pin_d1', cfg.pins?.d1);
-  val('pin_d2', cfg.pins?.d2); val('pin_d3', cfg.pins?.d3);
-  val('pin_d4', cfg.pins?.d4); val('pin_d5', cfg.pins?.d5);
-  val('pin_d6', cfg.pins?.d6); val('pin_strobe', cfg.pins?.strobe);
+  for (let i = 0; i < 7; i++) val('pin_addr'+i, cfg.pins?.['addr'+i]);
+  val('pin_key_return', cfg.pins?.key_return);
   val('pin_pair_btn', cfg.pins?.pair_btn);
   val('pin_mode_jp', cfg.pins?.mode_jp);
   val('pin_led', cfg.pins?.led);
   val('pin_bt_led', cfg.pins?.bt_led);
-
-  // Timing
-  val('data_setup_us', cfg.timing?.data_setup_us);
-  val('strobe_pulse_us', cfg.timing?.strobe_pulse_us);
-  val('inter_char_delay_us', cfg.timing?.inter_char_delay_us);
-  val('repeat_delay_ms', cfg.timing?.repeat_delay_ms);
-  val('repeat_rate_ms', cfg.timing?.repeat_rate_ms);
 
   // WiFi / Settings
   val('device_name', cfg.wifi?.ap_ssid);
@@ -389,65 +352,24 @@ function populateForm() {
   val('sta_password', cfg.wifi?.sta_password);
   val('ap_password', cfg.wifi?.ap_password);
   val('ap_channel', cfg.wifi?.ap_channel);
-
-  // Key mappings
-  populateKeyTable();
-}
-
-function populateKeyTable() {
-  const body = document.getElementById('keyTableBody');
-  body.innerHTML = '';
-  (cfg.special_keys || []).forEach((k, i) => {
-    body.innerHTML += keyRow(i, k);
-  });
-}
-
-function keyRow(i, k) {
-  return `<tr id="kr${i}">
-    <td><input type="checkbox" ${k.enabled?'checked':''} data-i="${i}" data-f="enabled"></td>
-    <td><input type="text" value="${esc(k.label)}" data-i="${i}" data-f="label" style="width:70px"></td>
-    <td><input type="number" value="${k.keycode}" data-i="${i}" data-f="keycode" style="width:50px" class="mono"></td>
-    <td><input type="text" value="${esc(k.native_hex)}" data-i="${i}" data-f="native_hex" class="mono" style="width:90px"></td>
-    <td class="mono" style="color:var(--ok)">${esc(k.native_display||'')}</td>
-    <td><input type="text" value="${esc(k.ansi_hex)}" data-i="${i}" data-f="ansi_hex" class="mono" style="width:90px"></td>
-    <td class="mono" style="color:var(--ok)">${esc(k.ansi_display||'')}</td>
-    <td><button class="btn-danger btn-sm" onclick="delKeyRow(${i})">&#x2716;</button></td>
-  </tr>`;
-}
-
-function addKeyRow() {
-  if (!cfg.special_keys) cfg.special_keys = [];
-  cfg.special_keys.push({keycode:0,label:'',native_hex:'',ansi_hex:'',native_display:'',ansi_display:'',enabled:true});
-  populateKeyTable();
-}
-
-function delKeyRow(i) {
-  cfg.special_keys.splice(i, 1);
-  populateKeyTable();
 }
 
 // --- Gather form data ---
 function gatherConfig() {
   cfg.terminal = {
-    ansi_mode: gsel('ansi_mode') === 'true',
-    use_mode_jumper: gchk('use_mode_jumper'),
-    strobe_active_low: gsel('strobe_active_low') === 'true'
+    use_mode_jumper: gchk('use_mode_jumper')
   };
   cfg.features = {
-    usb: gchk('feat_usb'), bt_classic: gchk('feat_bt'),
+    bt_classic: gchk('feat_bt'),
     ble: gchk('feat_ble'), wifi: gchk('feat_wifi')
   };
   cfg.pins = {
-    d0: gnum('pin_d0'), d1: gnum('pin_d1'), d2: gnum('pin_d2'), d3: gnum('pin_d3'),
-    d4: gnum('pin_d4'), d5: gnum('pin_d5'), d6: gnum('pin_d6'), strobe: gnum('pin_strobe'),
+    key_return: gnum('pin_key_return'),
     pair_btn: gnum('pin_pair_btn'), mode_jp: gnum('pin_mode_jp'),
     led: gnum('pin_led'), bt_led: gnum('pin_bt_led')
   };
-  cfg.timing = {
-    strobe_pulse_us: gnum('strobe_pulse_us'), data_setup_us: gnum('data_setup_us'),
-    inter_char_delay_us: gnum('inter_char_delay_us'),
-    repeat_delay_ms: gnum('repeat_delay_ms'), repeat_rate_ms: gnum('repeat_rate_ms')
-  };
+  for (let i = 0; i < 7; i++) cfg.pins['addr'+i] = gnum('pin_addr'+i);
+
   const devName = gval('device_name');
   const hostName = devName.toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
   cfg.wifi = {
@@ -455,21 +377,6 @@ function gatherConfig() {
     hostname: hostName || 'keybridge',
     ap_ssid: devName, ap_password: gval('ap_password'), ap_channel: gnum('ap_channel')
   };
-
-  // Gather key table
-  cfg.special_keys = [];
-  const rows = document.querySelectorAll('#keyTableBody tr');
-  rows.forEach(row => {
-    const inputs = row.querySelectorAll('input');
-    const entry = {};
-    inputs.forEach(inp => {
-      const f = inp.dataset.f;
-      if (f === 'enabled') entry.enabled = inp.checked;
-      else if (f === 'keycode') entry.keycode = parseInt(inp.value) || 0;
-      else if (f) entry[f] = inp.value;
-    });
-    if (entry.keycode !== undefined) cfg.special_keys.push(entry);
-  });
 }
 
 // --- Save ---
@@ -520,16 +427,74 @@ async function triggerPair() {
   } catch(e) { document.getElementById('btStatus').textContent = 'Error'; }
 }
 
-async function sendTest() {
-  const v = document.getElementById('testChar').value.trim();
-  if (!v) return;
-  try {
-    await fetch('/api/test', {method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({char: v})});
-    toast('Sent', true);
-  } catch(e) { toast('Send failed', false); }
+// --- Scan test tools ---
+function updateScanInfo() {
+  const addr = parseInt(document.getElementById('scanTestAddr').value) || 0;
+  document.getElementById('scanTestInfo').textContent =
+    'col=' + ((addr >> 3) & 0x0F) + ' row=' + (addr & 0x07);
 }
 
+async function scanTest() {
+  const addr = parseInt(document.getElementById('scanTestAddr').value);
+  const dur = parseInt(document.getElementById('scanTestDuration').value) || 200;
+  if (isNaN(addr) || addr < 0 || addr > 127) { toast('Address must be 0-127', false); return; }
+  try {
+    const r = await fetch('/api/scan/test', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({addr: addr, duration_ms: dur})
+    });
+    const result = await r.json();
+    if (result.ok) toast('Addr 0x' + addr.toString(16).toUpperCase().padStart(2,'0') + ' asserted ' + dur + 'ms', true);
+    else toast(result.error || 'Failed', false);
+  } catch(e) { toast('Error: ' + e, false); }
+}
+
+async function scanSweep() {
+  const start = parseInt(document.getElementById('sweepStart').value) || 0;
+  const end = parseInt(document.getElementById('sweepEnd').value) || 127;
+  const hold = parseInt(document.getElementById('sweepHold').value) || 300;
+  const gap = parseInt(document.getElementById('sweepGap').value) || 200;
+  try {
+    const r = await fetch('/api/scan/sweep', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({start: start, end: end, hold_ms: hold, gap_ms: gap})
+    });
+    const result = await r.json();
+    toast(result.message || 'Sweep started', true);
+  } catch(e) { toast('Error: ' + e, false); }
+}
+
+async function snoopStart() {
+  try {
+    await fetch('/api/scan/snoop', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({enable: true})
+    });
+    toast('Snoop started — wait a few seconds, then Read Histogram', true);
+  } catch(e) { toast('Error: ' + e, false); }
+}
+
+async function snoopRead() {
+  try {
+    const r = await fetch('/api/scan/histogram');
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const data = await r.json();
+    const box = document.getElementById('histogramBox');
+    box.style.display = 'block';
+    let lines = 'Total scans: ' + (data.total_scans||0) + '  Last addr: 0x'
+              + ((data.last_addr||0).toString(16).toUpperCase().padStart(2,'0')) + '\n';
+    lines += 'Addr  Col Row  Count\n';
+    lines += '----  --- ---  -----\n';
+    (data.addresses || []).forEach(a => {
+      lines += '0x' + a.addr.toString(16).toUpperCase().padStart(2,'0')
+            + '   ' + String(a.col).padStart(2) + '   ' + a.row
+            + '    ' + a.count + '\n';
+    });
+    box.textContent = lines;
+  } catch(e) { toast('Error: ' + e, false); }
+}
+
+// --- Password ---
 async function changePassword() {
   const cur = document.getElementById('cur_pass').value;
   const nw = document.getElementById('new_pass').value;
@@ -560,10 +525,16 @@ async function updateStatus() {
     const r = await fetch('/api/status');
     if (!r.ok) return;
     const s = await r.json();
-    dot('dotUsb', s.usb_connected);
     dot('dotBt', s.bt_connected);
     dot('dotWifi', true);
-    document.getElementById('modeLabel').textContent = s.ansi_mode ? 'ANSI' : 'Native';
+    if (s.uptime_sec !== undefined) {
+      const h = Math.floor(s.uptime_sec / 3600);
+      const m = Math.floor((s.uptime_sec % 3600) / 60);
+      document.getElementById('uptimeLabel').textContent = h + 'h ' + m + 'm';
+    }
+    if (s.free_heap !== undefined) {
+      document.getElementById('heapLabel').textContent = Math.round(s.free_heap / 1024) + ' KB';
+    }
     if (s.wifi_mode) document.getElementById('wifiModeLabel').textContent = s.wifi_mode;
     if (s.wifi_ip) document.getElementById('wifiIpLabel').textContent = s.wifi_ip;
     if (s.hostname) document.getElementById('wifiHostLabel').textContent = s.hostname + '.local';
@@ -587,20 +558,6 @@ function startLogPoll() {
 
 function clearLog() { document.getElementById('keyLog').textContent = ''; }
 
-// --- Terminal presets ---
-async function loadPreset(name) {
-  try {
-    const r = await fetch('/api/preset/' + encodeURIComponent(name));
-    if (!r.ok) throw new Error('HTTP ' + r.status);
-    const data = await r.json();
-    if (data.special_keys) {
-      cfg.special_keys = data.special_keys;
-      populateKeyTable();
-      toast('Preset loaded — click Save to apply', true);
-    }
-  } catch(e) { toast('Preset not found', false); }
-}
-
 // --- Helpers ---
 function $(id) { return document.getElementById(id); }
 function val(id, v) { if ($(id) && v !== undefined) $(id).value = v; }
@@ -613,7 +570,6 @@ function gchk(id) { return $(id) ? $(id).checked : false; }
 function dot(id, on) { const d = $(id); if(d) d.className = 'status-dot ' + (on?'dot-on':'dot-off'); }
 function esc(s) { return String(s||'').replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;'); }
 
-// Update password UI based on whether a password is set
 function updatePasswordUI(authRequired) {
   const curRow = document.getElementById('curPassRow');
   const title = document.getElementById('passGroupTitle');
@@ -638,7 +594,6 @@ async function init() {
       cfg = await r.json();
       showMain();
       populateForm();
-      // Check if auth is required and update password UI
       const sr = await fetch('/api/status');
       if (sr.ok) {
         const s = await sr.json();
