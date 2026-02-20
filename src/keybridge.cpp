@@ -128,6 +128,12 @@ static volatile uint8_t key_state[128] = {0};
 static uint8_t scan_addr_pins[7];
 static uint8_t scan_return_pin;
 
+// Scan snoop mode — tracks which addresses the terminal is scanning
+static volatile bool scan_snoop_mode              = false;
+static volatile uint32_t scan_addr_histogram[128] = {0};
+static volatile uint32_t scan_last_addr           = 0xFF;
+static volatile uint32_t scan_total_count          = 0;
+
 void setupScanPins() {
     // Address inputs (from terminal via TXS0108E)
     for (int i = 0; i < 7; i++) {
@@ -213,6 +219,13 @@ static void scan_response_task(void *arg) {
             if (gpio_in & addr_masks[i]) {
                 addr |= (1 << i);
             }
+        }
+
+        // Snoop mode: track address histogram
+        if (scan_snoop_mode) {
+            scan_addr_histogram[addr]++;
+            scan_last_addr = addr;
+            scan_total_count++;
         }
 
         // Drive Key Return based on key state table
@@ -1062,6 +1075,84 @@ void startWebServer() {
             return;
         }
         server.send(200, "application/json", "{\"ok\":true}");
+    });
+
+    // Scan snoop — start/stop address monitoring
+    server.on("/api/scan/snoop", HTTP_POST, []() {
+        if (!isAuthenticated()) { sendUnauthorized(); return; }
+        JsonDocument doc;
+        deserializeJson(doc, server.arg("plain"));
+        bool enable = doc["enable"] | false;
+        if (enable) {
+            memset((void *)scan_addr_histogram, 0, sizeof(scan_addr_histogram));
+            scan_total_count = 0;
+            scan_snoop_mode  = true;
+            server.send(200, "application/json", "{\"ok\":true,\"message\":\"Snoop started\"}");
+        } else {
+            scan_snoop_mode = false;
+            server.send(200, "application/json", "{\"ok\":true,\"message\":\"Snoop stopped\"}");
+        }
+    });
+
+    // Scan histogram — read address frequency data
+    server.on("/api/scan/histogram", HTTP_GET, []() {
+        if (!isAuthenticated()) { sendUnauthorized(); return; }
+        scan_snoop_mode = false; // Pause while reading
+        JsonDocument doc;
+        doc["total_scans"] = scan_total_count;
+        doc["last_addr"]   = scan_last_addr;
+        JsonArray addrs    = doc["addresses"].to<JsonArray>();
+        for (int i = 0; i < 128; i++) {
+            if (scan_addr_histogram[i] > 0) {
+                JsonObject e = addrs.add<JsonObject>();
+                e["addr"]  = i;
+                e["count"] = scan_addr_histogram[i];
+                e["col"]   = (i >> 3) & 0x0F;
+                e["row"]   = i & 0x07;
+            }
+        }
+        String out;
+        serializeJson(doc, out);
+        server.send(200, "application/json", out);
+    });
+
+    // Scan test — assert a single address for a duration
+    server.on("/api/scan/test", HTTP_POST, []() {
+        if (!isAuthenticated()) { sendUnauthorized(); return; }
+        JsonDocument doc;
+        deserializeJson(doc, server.arg("plain"));
+        uint8_t addr       = doc["addr"] | 0xFF;
+        uint16_t duration  = doc["duration_ms"] | 200;
+        if (addr >= 128) {
+            server.send(400, "application/json", "{\"ok\":false,\"error\":\"addr must be 0-127\"}");
+            return;
+        }
+        if (duration > 5000) duration = 5000;
+        scanKeyPress(addr);
+        server.send(200, "application/json", "{\"ok\":true}");
+        delay(duration);
+        scanKeyRelease(addr);
+    });
+
+    // Scan sweep — test a range of addresses sequentially
+    server.on("/api/scan/sweep", HTTP_POST, []() {
+        if (!isAuthenticated()) { sendUnauthorized(); return; }
+        JsonDocument doc;
+        deserializeJson(doc, server.arg("plain"));
+        uint8_t start    = doc["start"] | 0;
+        uint8_t end      = doc["end"] | 127;
+        uint16_t hold_ms = doc["hold_ms"] | 300;
+        uint16_t gap_ms  = doc["gap_ms"] | 200;
+        logKey("[SCAN] Sweep %d-%d, hold=%dms", start, end, hold_ms);
+        server.send(200, "application/json", "{\"ok\":true,\"message\":\"Sweep started\"}");
+        for (uint8_t addr = start; addr <= end && addr < 128; addr++) {
+            logKey("[SCAN] addr=0x%02X (col=%d row=%d)", addr, (addr >> 3) & 0x0F, addr & 0x07);
+            scanKeyPress(addr);
+            delay(hold_ms);
+            scanKeyRelease(addr);
+            delay(gap_ms);
+        }
+        logKey("[SCAN] Sweep complete");
     });
 
     // Presets (auth required)
