@@ -1,294 +1,163 @@
-# KeyBridge — USB / Bluetooth to Parallel Terminal Adapter
+# KeyBridge — Bluetooth Keyboard to Vintage Terminal Adapter
 
-Universal parallel ASCII keyboard adapter with a **web-based configuration
-interface**. Connects modern USB or Bluetooth keyboards to vintage terminals
-that use a 7-bit parallel ASCII keyboard interface (Wyse 50/50+, ADM-3A,
-VT100 with parallel keyboard, and others).
+> **WARNING: This project is incomplete and non-functional.** The firmware
+> compiles and boots but does not yet successfully connect a keyboard to a
+> terminal. It is an experiment in AI-assisted vibe coding (built primarily
+> with Claude Code). Use at your own risk — expect bugs, wrong assumptions,
+> and incomplete features. Contributions and reality checks welcome.
 
-All settings — pin assignments, key mappings, terminal mode, timing — are
-configurable at runtime through a WiFi web interface. No reflashing needed.
+Bridges a modern Bluetooth keyboard to a vintage **Wyse 50** terminal by
+emulating the original keyboard's scan matrix interface. The ESP32 reads
+scan addresses from the terminal's keyboard connector (J3), looks up which
+keys are currently pressed (from Bluetooth HID input), and drives the Key
+Return line accordingly.
 
-## Features
+A WiFi web interface provides runtime configuration, scan diagnostics, and
+key mapping tools — no reflashing needed after initial setup.
 
-- **USB, Bluetooth Classic, and BLE** keyboard support (all simultaneously)
-- **Web configuration interface** via WiFi (AP or station mode with mDNS)
-- **Editable key mappings** — customize escape sequences for any terminal
-- **Built-in presets** for Wyse 50+, VT100, and ADM-3A
-- **Live key monitor** — watch characters as they're sent to the terminal
-- **Test mode** — send individual characters from the web UI
-- **Hardware controls** — PAIR button for Bluetooth, MODE jumper for Native/ANSI
-- **Persistent settings** — saved to flash, survives power cycles
-- **Factory reset** — via web UI or by erasing NVS
+## Current Status
 
-## How It Works
+**What works:**
+- ESP32 boots, creates WiFi AP, serves the web configuration UI
+- Web UI for configuration, status monitoring, key log
+- NVS-persistent configuration with JSON API
+- Captive portal in AP mode
+- Optional password authentication for web UI
 
-```
-                    ┌─────────────────────────────────┐
-USB Keyboard ──────>│                                 │
-                    │           ESP32-S3               │
-BT Keyboard ·····>│                                 ├──> 74HCT245 ──> Terminal
-                    │  WiFi AP or STA mode            │    (3.3V→5V)    DIN port
-BLE Keyboard ····>│  Config:  http://keybridge.local │
-                    │                                 │
-                    │  [PAIR btn]  [MODE jumper]       │
-                    └─────────────────────────────────┘
-```
+**What doesn't work yet:**
+- Bluetooth keyboard pairing and HID input (Classic BT code exists but untested on original ESP32)
+- Wyse 50 scan matrix output (planned, not yet implemented)
+- HID-to-Wyse50 key address mapping (addresses unknown, need empirical discovery)
+- USB keyboard input (ESP32-S3 only; original ESP32 has no USB host)
 
-## Parts List
+**Known issues:**
+- USB host code assumes device address 1, breaks with hubs (see `docs/plans/code-review-1.md`)
+- BLE scan filters may miss keyboards that don't advertise HID UUID in advertisements
+- Station-mode WiFi has no automatic reconnect after failure
 
-| Part                        | Qty | Notes                                  |
-|-----------------------------|-----|----------------------------------------|
-| ESP32-S3 DevKitC (USB-C)   | 1   | Must be S3 for USB Host + BT + WiFi   |
-| USB-C to USB-A adapter      | 1   | For USB keyboards                      |
-| 74HCT245 octal buffer       | 1   | Level shift 3.3V→5V (DIP-20)          |
-| 0.1µF ceramic capacitor     | 1   | Decoupling for 74HCT245               |
-| DIN connector                | 1   | Match your terminal's keyboard port    |
-| Momentary pushbutton         | 1   | BT PAIR button (normally open)         |
-| 2-pin header + jumper shunt  | 1   | MODE select (Native/ANSI)             |
-| LED + 330Ω resistor          | 1-2 | Optional: activity + BT status         |
-
-**Total: ~$12-18**
-
-## Complete Wiring
-
-### ESP32-S3 → 74HCT245 → Terminal DIN
+## Architecture
 
 ```
-ESP32-S3          74HCT245           Terminal DIN
-─────────         ────────           ────────────
-GPIO 4  ───────── A1    B1 ───────── Data 0 (D0, LSB)
-GPIO 5  ───────── A2    B2 ───────── Data 1 (D1)
-GPIO 6  ───────── A3    B3 ───────── Data 2 (D2)
-GPIO 7  ───────── A4    B4 ───────── Data 3 (D3)
-GPIO 15 ───────── A5    B5 ───────── Data 4 (D4)
-GPIO 16 ───────── A6    B6 ───────── Data 5 (D5)
-GPIO 17 ───────── A7    B7 ───────── Data 6 (D6, MSB)
-GPIO 18 ───────── A8    B8 ───────── Strobe (active LOW)
-
-3.3V    ───────── DIR                (A→B direction)
-GND     ───────── OE                 (always enabled)
-                  GND ─── GND        (common ground)
-                  VCC ─── +5V        (from terminal or external)
+                    ┌────────────────────────────────────┐
+                    │           ESP32 (WROOM-32)         │
+BT Keyboard ·····> │                                    │
+(Classic BT)       │  Scan response task (core 0):      │
+                    │    Read 7-bit address from J3      │
+                    │    Look up key_state[addr]         │  TXS0108E    Wyse 50
+                    │    Drive Key Return via MOSFET  ───┼──(5V↔3.3V)──► J3 port
+                    │                                    │
+                    │  WiFi AP or STA mode               │
+                    │  Config: http://keybridge.local    │
+                    └────────────────────────────────────┘
 ```
 
-All pin assignments are changeable through the web interface.
+### Why original ESP32 (not ESP32-S3)?
 
-### 74HCT245 Pinout (DIP-20)
+The Keychron K2 (our test keyboard) uses a Broadcom BCM20730 chipset —
+**Classic Bluetooth only**, hardware-incapable of BLE. The ESP32-S3 only
+supports BLE, so it can't pair with the K2 or many other popular BT
+keyboards. The original ESP32 supports Classic BT + BLE + WiFi
+simultaneously.
 
-```
-             ┌──── U ────┐
-   DIR (3V3) │ 1      20 │ VCC (+5V)
-     A1 (D0) │ 2      19 │ OE (→ GND)
-     A2 (D1) │ 3      18 │ B1 (→ DIN D0)
-     A3 (D2) │ 4      17 │ B2 (→ DIN D1)
-     A4 (D3) │ 5      16 │ B3 (→ DIN D2)
-     A5 (D4) │ 6      15 │ B4 (→ DIN D3)
-     A6 (D5) │ 7      14 │ B5 (→ DIN D4)
-     A7 (D6) │ 8      13 │ B6 (→ DIN D5)
-  A8 (Strobe)│ 9      12 │ B7 (→ DIN D6)
-         GND │ 10     11 │ B8 (→ DIN Strobe)
-             └───────────┘
+### Why scan matrix (not parallel ASCII)?
 
-Place 0.1µF cap between pin 20 (VCC) and pin 10 (GND).
-```
+The Wyse 50 keyboard connector (J3) is **not** a parallel ASCII input. The
+terminal's 8031 CPU scans a 7-bit address bus and reads a single Key Return
+line to detect which keys are pressed — the same protocol used by the
+original keyboard's passive switch matrix. KeyBridge emulates this matrix.
 
-### Direct Wiring (No Level Shifter)
+## Hardware
 
-Many 5V TTL inputs accept 3.3V as logic high. You can try connecting
-ESP32 GPIOs directly to the DIN pins. If characters are garbled or
-missing, add the 74HCT245.
+### Parts
 
-### PAIR Button
+| Part | Qty | Notes |
+|------|-----|-------|
+| ESP32 DevKit (WROOM-32) | 1 | Original ESP32, not S3 (need Classic BT) |
+| TXS0108E breakout | 1 | Bidirectional level shifter (3.3V ↔ 5V) |
+| 2N7000 N-channel MOSFET | 1 | Drives Key Return line |
+| Wire / headers | — | For J3 connector wiring |
 
-```
-GPIO 0 ────┤ Button ├──── GND
-            (N.O.)
-```
+### Wyse 50 J3 Keyboard Connector
 
-GPIO 0 is the BOOT button on most dev boards — use it for prototyping.
-Press to scan for Bluetooth keyboards.
+| J3 Pin | Signal | Direction | ESP32 GPIO |
+|--------|--------|-----------|------------|
+| 1 | Chassis Ground | — | — |
+| 2 | Logic Ground | — | GND |
+| 3 | +5V | Power | TXS0108E VB |
+| 4 | Address bit 2 | Terminal > ESP32 | GPIO 14 |
+| 5 | Address bit 1 | Terminal > ESP32 | GPIO 5 |
+| 6 | Address bit 0 | Terminal > ESP32 | GPIO 4 |
+| 7 | Address bit 3 | Terminal > ESP32 | GPIO 15 |
+| 8 | Address bit 5 | Terminal > ESP32 | GPIO 16 |
+| 9 | Address bit 6 | Terminal > ESP32 | GPIO 17 |
+| 10 | Address bit 4 | Terminal > ESP32 | GPIO 13 |
+| 11 | Key Return | ESP32 > Terminal | GPIO 18 (via 2N7000) |
+| 12 | N/C | — | — |
 
-### MODE Jumper
+GPIOs 6-11 are reserved for internal flash on the original ESP32 — the
+defaults above avoid those pins. All pin assignments are configurable via
+the web UI.
 
-```
-GPIO 38 ────┤ Jumper ├──── GND
-```
+### Wiring
 
-Open = Native, Closed = ANSI/VT100. Readable at runtime.
-Can also be set via the web interface (disable "use hardware jumper"
-to control mode purely in software).
-
-### Power
-
-**Option A**: Terminal-powered — connect terminal's +5V to ESP32 VIN pin.
-
-**Option B**: USB-powered — plug ESP32 UART port into USB power/computer.
-
-Don't connect both simultaneously.
-
-### Terminal DIN Connector
-
-**You must verify the pinout for your specific terminal.** Use a
-multimeter to find +5V and GND first, then trace data lines on the PCB.
-
-Expected signals: D0-D6 (7 data), Strobe (active-low), +5V, GND.
+See `docs/plans/2026-02-19-wyse50-keyboard-interface.md` for detailed
+TXS0108E and MOSFET wiring diagrams.
 
 ## Building
 
-### PlatformIO
+Requires [PlatformIO](https://platformio.org/).
 
 ```bash
-pip install platformio
-cd KeyBridge
-pio run -t upload
-pio device monitor
+pio run                          # Compile
+pio run -t upload                # Compile and flash
+pio run -t upload -t monitor     # Flash and open serial monitor
+pio device monitor               # Serial monitor only (115200 baud)
 ```
 
-### Arduino IDE
+## Web Interface
 
-1. Install ESP32 board support (Arduino Core 3.x)
-2. Install **ArduinoJson** library (v7+) via Library Manager
-3. Board: **ESP32S3 Dev Module**
-4. USB Mode: **USB-OTG (TinyUSB)**
-5. USB CDC On Boot: **Disabled**
-6. Upload and open Serial Monitor at 115200
-
-## Web Configuration Interface
-
-### Connecting
-
-**First boot (AP mode)**:
+**First boot (AP mode):**
 
 1. Power up the adapter
-2. On your phone/laptop, connect to WiFi network **"KeyBridge"**
-   (default password: **terminal50**)
-3. Open a browser and go to **http://keybridge.local**
+2. Connect to WiFi network **"KeyBridge"** (default password: **terminal50**)
+3. A captive portal should redirect to the config page automatically
+4. Or browse to **http://keybridge.local**
 
-**After configuring Station mode**:
+The web UI provides:
+- **General** — Feature toggles, Bluetooth pairing, terminal mode
+- **Pins** — GPIO assignments (configurable)
+- **Timing** — Strobe and repeat timing parameters
+- **Key Mappings** — Special key definitions and terminal presets
+- **WiFi** — AP/STA settings, hostname, mDNS
+- **Monitor** — Live key log and test output
 
-1. The adapter joins your local WiFi network automatically on boot
-2. Browse to **http://keybridge.local** from any device on the same network
-3. If the configured network is unavailable, the adapter falls back to AP mode
+Authentication is optional — set a password via the web UI to enable it.
 
-The web UI has six tabs:
+## Planned Work
 
-### General Tab
-- Terminal mode (Native/ANSI) and hardware jumper enable
-- Strobe polarity
-- Feature toggles (USB, BT Classic, BLE, WiFi)
-- Bluetooth pairing button
+The implementation plan is in `docs/plans/2026-02-19-wyse50-keyboard-interface.md`. Summary:
 
-### Pins Tab
-- All GPIO assignments for data lines, strobe, buttons, LEDs
-- Changes require reboot
-
-### Timing Tab
-- Strobe pulse width and data setup time
-- Inter-character delay for escape sequences
-- Auto-repeat delay and rate
-
-### Key Mappings Tab
-- Full table of special key definitions
-- Each row: HID scancode, label, Native sequence, ANSI sequence
-- Sequences shown in hex and human-readable format
-- Add/remove keys, enable/disable individual mappings
-- **Presets**: One-click load for Wyse 50+, VT100, or ADM-3A
-
-### WiFi Tab
-- Current status: WiFi mode, IP address, mDNS hostname
-- Station mode: SSID, password, and hostname for joining a local network
-- Access point settings: SSID, password, and channel (fallback)
-- Changes take effect after reboot
-
-### Monitor Tab
-- Live display of characters being sent to the terminal
-- Test output: type a character or hex code to send directly
-
-## Using USB Keyboards
-
-Plug a standard USB keyboard into the ESP32-S3's **native USB-C port**
-(not the UART/debug port) using a USB-C to USB-A adapter.
-
-Detection is automatic. Hot-plugging works.
-
-## Using Bluetooth Keyboards
-
-Bluetooth does NOT auto-scan. You must initiate pairing:
-
-1. Put your Bluetooth keyboard into **pairing mode**
-2. Either press the **PAIR button** on the adapter, or click
-   **Scan & Pair** on the web interface
-3. The adapter scans for 5 seconds and connects to the strongest signal
-4. The Monitor tab shows connection status
-
-To switch keyboards, press PAIR again (disconnects current, rescans).
-
-### WiFi + Bluetooth Coexistence
-
-The ESP32-S3 runs WiFi and Bluetooth simultaneously using hardware
-time-division multiplexing on its shared 2.4GHz radio. Both work fine
-for this application — keyboard HID reports are tiny and infrequent
-compared to the radio's bandwidth, and web config page loads are
-occasional.
-
-## Adapting for Other Terminals
-
-The web interface makes it easy to adapt this for any terminal that uses
-a parallel ASCII keyboard interface. Just change the key mappings:
-
-1. Connect to the web UI
-2. Go to the **Key Mappings** tab
-3. Load a preset or manually edit sequences
-4. Click **Save & Apply**
-
-### Adding a New Terminal Type
-
-For each special key, you need to know what character or escape sequence
-the terminal expects. Check the terminal's programmer's guide. Enter
-sequences as hex bytes in the mapping table.
-
-Common sequence formats:
-- Single control char: `0b` (Ctrl-K)
-- ESC + char: `1b4a` (ESC J)
-- CSI sequence: `1b5b41` (ESC [ A)
-- Ctrl-A prefix: `0140` (Ctrl-A @)
-
-## Troubleshooting
-
-**Can't connect to WiFi**: In AP mode, the default SSID is "KeyBridge",
-password "terminal50". In STA mode, if the adapter can't reach the
-configured network it falls back to AP mode after 15 seconds. If you
-changed the AP credentials and forgot them, do a factory reset by
-erasing NVS (hold BOOT button during flash, or reflash firmware).
-
-**No response from terminal**: Check DIN pinout, strobe polarity (try
-both), and voltage levels (add 74HCT245 if needed).
-
-**Garbled characters**: Data lines swapped at DIN — verify D0-D6 order.
-
-**Bluetooth won't connect**: Press PAIR button first, ensure keyboard is
-in pairing mode. Check Monitor tab for scan results.
-
-**Function keys wrong**: Check Key Mappings tab matches your terminal's
-personality mode. Load the correct preset.
-
-**Settings lost after power cycle**: Should not happen — config is saved
-to NVS flash. If it does, check that `saveConfig` succeeded (watch
-serial monitor for errors).
-
-## Factory Reset
-
-Three ways to reset to defaults:
-
-1. **Web UI**: General tab → Factory Reset button
-2. **Serial**: Send `FACTORY_RESET` at 115200 baud (not yet implemented)
-3. **Reflash**: Erase flash with `pio run -t erase` then re-upload
+1. **Port to original ESP32 with Classic BT** — new PlatformIO env, sdkconfig changes, guard USB code
+2. **Replace parallel output with scan input pins** — update config struct for 7 address inputs + key return
+3. **Implement scan response engine** — tight polling loop on core 0 reading address bus, driving key return
+4. **HID-to-Wyse50 key mapping** — lookup table from HID keycodes to Wyse 50 scan addresses
+5. **Scan snoop / discovery tools** — API endpoints for empirically mapping key addresses
+6. **Update web UI** — scan test interface, address sweep, visual key map builder
+7. **Populate key map** — manual testing with real Wyse 50 hardware
+8. **Clean up dead code** — remove parallel ASCII output, escape sequence mapping
 
 ## Files
 
-| File                    | Purpose                                  |
-|-------------------------|------------------------------------------|
-| `src/keybridge.cpp`     | Main firmware (USB, BT, web server)     |
-| `src/config.h`          | Config structure, NVS storage, JSON API  |
-| `src/web_ui.h`          | Embedded HTML/CSS/JS web interface       |
-| `platformio.ini`        | Build configuration                      |
+| File | Purpose |
+|------|---------|
+| `src/keybridge.cpp` | Main firmware (BT, WiFi, web server, GPIO) |
+| `src/config.h` | Config structure, NVS storage, JSON API |
+| `src/web_ui.h` | Embedded HTML/CSS/JS web interface |
+| `src/esp_hid_gap.c` | BLE/Classic BT GAP and scan logic |
+| `sdkconfig.defaults` | ESP-IDF Kconfig overrides |
+| `platformio.ini` | Build configuration |
+| `docs/plans/` | Implementation plans and code review notes |
+
+## License
+
+MIT
