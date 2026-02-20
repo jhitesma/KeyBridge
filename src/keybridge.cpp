@@ -231,173 +231,206 @@ static void scan_response_task(void *arg) {
 }
 
 // ============================================================
-// HID CONSTANTS
+// HID-TO-WYSE50 KEY ADDRESS MAPPING
 // ============================================================
-#define MOD_LEFT_CTRL 0x01
-#define MOD_LEFT_SHIFT 0x02
-#define MOD_LEFT_ALT 0x04
-#define MOD_LEFT_GUI 0x08
-#define MOD_RIGHT_CTRL 0x10
-#define MOD_RIGHT_SHIFT 0x20
-#define MOD_RIGHT_ALT 0x40
-#define MOD_RIGHT_GUI 0x80
+// Source: MAME wy50kb.cpp (verified against WY-50 maintenance manual schematic)
+// Address = (column * 8) + row; bits 6-3 = column (0-12), bits 2-0 = row (0-7)
+// 0xFF = no mapping (key not present on Wyse 50)
 
-// ============================================================
-// SCANCODE TABLES (built-in, not configurable via web)
-// ============================================================
+#define WYSE_SHIFT 0x4A // Col 9, Row 2
+#define WYSE_CTRL  0x1F // Col 3, Row 7
 
-static const uint8_t hid_to_ascii_lower[104] = {
-    0x00, 0x00, 0x00, 0x00, 'a',  'b',  'c',  'd',  'e',  'f',  'g',  'h',  'i',  'j',  'k',  'l',  'm',  'n',
-    'o',  'p',  'q',  'r',  's',  't',  'u',  'v',  'w',  'x',  'y',  'z',  '1',  '2',  '3',  '4',  '5',  '6',
-    '7',  '8',  '9',  '0',  0x0D, 0x1B, 0x08, 0x09, 0x20, '-',  '=',  '[',  ']',  '\\', 0x00, ';',  '\'', '`',
-    ',',  '.',  '/',  0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x00, 0x00, 0x00, 0x00, 0x7F, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, '/',  '*',  '-',  '+',  0x0D, '1',
-    '2',  '3',  '4',  '5',  '6',  '7',  '8',  '9',  '0',  '.',  0x00, 0x00, 0x00, 0x00,
-};
+// 0xFF = no mapping (key not present on Wyse 50)
+static uint8_t hid_to_wyse50[256];
 
-static const uint8_t hid_to_ascii_upper[104] = {
-    0x00, 0x00, 0x00, 0x00, 'A',  'B',  'C',  'D',  'E',  'F',  'G',  'H',  'I',  'J',  'K',  'L',  'M',  'N',
-    'O',  'P',  'Q',  'R',  'S',  'T',  'U',  'V',  'W',  'X',  'Y',  'Z',  '!',  '@',  '#',  '$',  '%',  '^',
-    '&',  '*',  '(',  ')',  0x0D, 0x1B, 0x08, 0x09, 0x20, '_',  '+',  '{',  '}',  '|',  0x00, ':',  '"',  '~',
-    '<',  '>',  '?',  0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x00, 0x00, 0x00, 0x00, 0x7F, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, '/',  '*',  '-',  '+',  0x0D, '1',
-    '2',  '3',  '4',  '5',  '6',  '7',  '8',  '9',  '0',  '.',  0x00, 0x00, 0x00, 0x00,
-};
+void initKeyMap() {
+    memset(hid_to_wyse50, 0xFF, sizeof(hid_to_wyse50));
 
-// ============================================================
-// KEY TRANSLATION (uses configurable special key mappings)
-// ============================================================
+    // Letters (HID 0x04-0x1D = a-z)
+    hid_to_wyse50[0x04] = 0x3F; // a → Col 7, Row 7
+    hid_to_wyse50[0x05] = 0x2E; // b → Col 5, Row 6
+    hid_to_wyse50[0x06] = 0x4E; // c → Col 9, Row 6
+    hid_to_wyse50[0x07] = 0x37; // d → Col 6, Row 7
+    hid_to_wyse50[0x08] = 0x30; // e → Col 6, Row 0
+    hid_to_wyse50[0x09] = 0x17; // f → Col 2, Row 7
+    hid_to_wyse50[0x0A] = 0x0F; // g → Col 1, Row 7
+    hid_to_wyse50[0x0B] = 0x07; // h → Col 0, Row 7
+    hid_to_wyse50[0x0C] = 0x58; // i → Col 11, Row 0
+    hid_to_wyse50[0x0D] = 0x5F; // j → Col 11, Row 7
+    hid_to_wyse50[0x0E] = 0x67; // k → Col 12, Row 7
+    hid_to_wyse50[0x0F] = 0x2F; // l → Col 5, Row 7
+    hid_to_wyse50[0x10] = 0x0E; // m → Col 1, Row 6
+    hid_to_wyse50[0x11] = 0x16; // n → Col 2, Row 6
+    hid_to_wyse50[0x12] = 0x60; // o → Col 12, Row 0
+    hid_to_wyse50[0x13] = 0x51; // p → Col 10, Row 1
+    hid_to_wyse50[0x14] = 0x38; // q → Col 7, Row 0
+    hid_to_wyse50[0x15] = 0x28; // r → Col 5, Row 0
+    hid_to_wyse50[0x16] = 0x4F; // s → Col 9, Row 7
+    hid_to_wyse50[0x17] = 0x10; // t → Col 2, Row 0
+    hid_to_wyse50[0x18] = 0x00; // u → Col 0, Row 0
+    hid_to_wyse50[0x19] = 0x36; // v → Col 6, Row 6
+    hid_to_wyse50[0x1A] = 0x48; // w → Col 9, Row 0
+    hid_to_wyse50[0x1B] = 0x3E; // x → Col 7, Row 6
+    hid_to_wyse50[0x1C] = 0x08; // y → Col 1, Row 0
+    hid_to_wyse50[0x1D] = 0x1E; // z → Col 3, Row 6
 
-static bool capsLockOn = false;
+    // Number row (HID 0x1E-0x27 = 1-0)
+    hid_to_wyse50[0x1E] = 0x1B; // 1/! → Col 3, Row 3
+    hid_to_wyse50[0x1F] = 0x3B; // 2/@ → Col 7, Row 3
+    hid_to_wyse50[0x20] = 0x4B; // 3/# → Col 9, Row 3
+    hid_to_wyse50[0x21] = 0x33; // 4/$ → Col 6, Row 3
+    hid_to_wyse50[0x22] = 0x2B; // 5/% → Col 5, Row 3
+    hid_to_wyse50[0x23] = 0x13; // 6/^ → Col 2, Row 3
+    hid_to_wyse50[0x24] = 0x0B; // 7/& → Col 1, Row 3
+    hid_to_wyse50[0x25] = 0x03; // 8/* → Col 0, Row 3
+    hid_to_wyse50[0x26] = 0x5B; // 9/( → Col 11, Row 3
+    hid_to_wyse50[0x27] = 0x63; // 0/) → Col 12, Row 3
 
-const char *getSpecialSequence(uint8_t keycode) {
-    for (int i = 0; i < config.num_special_keys; i++) {
-        if (config.special_keys[i].enabled && config.special_keys[i].hid_keycode == keycode) {
-            return config.ansi_mode ? config.special_keys[i].seq_ansi : config.special_keys[i].seq_native;
-        }
-    }
-    return NULL;
+    // Common keys
+    hid_to_wyse50[0x28] = 0x65; // Return    → Col 12, Row 5
+    hid_to_wyse50[0x29] = 0x3C; // Escape    → Col 7, Row 4
+    hid_to_wyse50[0x2A] = 0x1A; // Backspace → Col 3, Row 2
+    hid_to_wyse50[0x2B] = 0x18; // Tab       → Col 3, Row 0
+    hid_to_wyse50[0x2C] = 0x19; // Space     → Col 3, Row 1
+
+    // Punctuation
+    hid_to_wyse50[0x2D] = 0x43; // -/_ → Col 8, Row 3
+    hid_to_wyse50[0x2E] = 0x53; // =/+ → Col 10, Row 3
+    hid_to_wyse50[0x2F] = 0x42; // [/{ → Col 8, Row 2
+    hid_to_wyse50[0x30] = 0x45; // ]/} → Col 8, Row 5
+    hid_to_wyse50[0x31] = 0x5C; // \/| → Col 11, Row 4
+    hid_to_wyse50[0x33] = 0x44; // ;/: → Col 8, Row 4
+    hid_to_wyse50[0x34] = 0x46; // '/" → Col 8, Row 6
+    hid_to_wyse50[0x35] = 0x4C; // `/~ → Col 9, Row 4
+    hid_to_wyse50[0x36] = 0x06; // ,/< → Col 0, Row 6
+    hid_to_wyse50[0x37] = 0x5E; // ./> → Col 11, Row 6
+    hid_to_wyse50[0x38] = 0x66; // //? → Col 12, Row 6
+
+    // Lock / special
+    hid_to_wyse50[0x39] = 0x3A; // Caps Lock → Col 7, Row 2
+
+    // Function keys (F1-F12 map to Wyse F1-F12)
+    hid_to_wyse50[0x3A] = 0x1D; // F1  → Col 3, Row 5
+    hid_to_wyse50[0x3B] = 0x3D; // F2  → Col 7, Row 5
+    hid_to_wyse50[0x3C] = 0x25; // F3  → Col 4, Row 5
+    hid_to_wyse50[0x3D] = 0x23; // F4  → Col 4, Row 3
+    hid_to_wyse50[0x3E] = 0x20; // F5  → Col 4, Row 0
+    hid_to_wyse50[0x3F] = 0x27; // F6  → Col 4, Row 7
+    hid_to_wyse50[0x40] = 0x26; // F7  → Col 4, Row 6
+    hid_to_wyse50[0x41] = 0x49; // F8  → Col 9, Row 1
+    hid_to_wyse50[0x42] = 0x24; // F9  → Col 4, Row 4
+    hid_to_wyse50[0x43] = 0x1C; // F10 → Col 3, Row 4
+    hid_to_wyse50[0x44] = 0x57; // F11 → Col 10, Row 7
+    hid_to_wyse50[0x45] = 0x22; // F12 → Col 4, Row 2
+
+    // Wyse-specific keys mapped to HID keys that don't conflict
+    hid_to_wyse50[0x47] = 0x0C; // Scroll Lock → SETUP (Col 1, Row 4) *** CRITICAL ***
+    hid_to_wyse50[0x48] = 0x34; // Pause/Break → Break (Col 6, Row 4)
+    hid_to_wyse50[0x49] = 0x01; // Insert      → Ins Char/Line (Col 0, Row 1)
+    hid_to_wyse50[0x4A] = 0x61; // Home        → Home (Col 12, Row 1)
+    hid_to_wyse50[0x4B] = 0x41; // Page Up     → Next/Prev Page (Col 8, Row 1)
+    hid_to_wyse50[0x4C] = 0x62; // Delete      → Del 0x7F (Col 12, Row 2)
+    hid_to_wyse50[0x4E] = 0x41; // Page Down   → Next/Prev Page (same key, shifted)
+
+    // Arrow keys
+    hid_to_wyse50[0x4F] = 0x0A; // Right → Col 1, Row 2
+    hid_to_wyse50[0x50] = 0x5A; // Left  → Col 11, Row 2
+    hid_to_wyse50[0x51] = 0x05; // Down  → Col 0, Row 5
+    hid_to_wyse50[0x52] = 0x4D; // Up    → Col 9, Row 5
+
+    // Keypad
+    hid_to_wyse50[0x54] = 0x66; // KP /     → //? (shared)
+    hid_to_wyse50[0x56] = 0x31; // KP -     → Col 6, Row 1
+    hid_to_wyse50[0x58] = 0x35; // KP Enter → Col 6, Row 5
+    hid_to_wyse50[0x59] = 0x12; // KP 1     → Col 2, Row 2
+    hid_to_wyse50[0x5A] = 0x02; // KP 2     → Col 0, Row 2
+    hid_to_wyse50[0x5B] = 0x52; // KP 3     → Col 10, Row 2
+    hid_to_wyse50[0x5C] = 0x11; // KP 4     → Col 2, Row 1
+    hid_to_wyse50[0x5D] = 0x2A; // KP 5     → Col 5, Row 2
+    hid_to_wyse50[0x5E] = 0x2C; // KP 6     → Col 5, Row 4
+    hid_to_wyse50[0x5F] = 0x14; // KP 7     → Col 2, Row 4
+    hid_to_wyse50[0x60] = 0x55; // KP 8     → Col 10, Row 5
+    hid_to_wyse50[0x61] = 0x59; // KP 9     → Col 11, Row 1
+    hid_to_wyse50[0x62] = 0x15; // KP 0     → Col 2, Row 5
+    hid_to_wyse50[0x63] = 0x29; // KP .     → Col 5, Row 1
 }
 
-void processKeypress(uint8_t keycode, uint8_t modifiers) {
-    if (keycode == 0 || keycode > 0x67) return;
-
-    if (config.pin_led >= 0) digitalWrite(config.pin_led, HIGH);
-
-    if (keycode == 0x39) {
-        capsLockOn = !capsLockOn;
-        logKey("Caps Lock: %s", capsLockOn ? "ON" : "OFF");
-        return;
-    }
-
-    bool shift = (modifiers & (MOD_LEFT_SHIFT | MOD_RIGHT_SHIFT)) != 0;
-    bool ctrl  = (modifiers & (MOD_LEFT_CTRL | MOD_RIGHT_CTRL)) != 0;
-    bool alt   = (modifiers & (MOD_LEFT_ALT | MOD_RIGHT_ALT)) != 0;
-
-    if (!ctrl && !alt) {
-        const char *seq = getSpecialSequence(keycode);
-        if (seq && seq[0]) {
-            sendString(seq);
-            return;
-        }
-    }
-
-    bool effective_shift = shift;
-    if (keycode >= 0x04 && keycode <= 0x1D) {
-        effective_shift = shift ^ capsLockOn;
-    }
-
-    if (keycode >= sizeof(hid_to_ascii_lower)) return;
-    uint8_t ascii = effective_shift ? hid_to_ascii_upper[keycode] : hid_to_ascii_lower[keycode];
-
-    if (ascii == 0x00) return;
-
-    if (ctrl) {
-        if (ascii >= 'a' && ascii <= 'z')
-            ascii = ascii - 'a' + 1;
-        else if (ascii >= 'A' && ascii <= 'Z')
-            ascii = ascii - 'A' + 1;
-        else if (ascii >= '[' && ascii <= '_')
-            ascii = ascii - '@';
-        else if (ascii == '@' || ascii == ' ')
-            ascii = 0x00;
-        else if (ascii == '?')
-            ascii = 0x7F;
-    }
-
-    if (alt) {
-        sendChar(0x1B);
-    }
-
-    sendChar(ascii);
-}
+// Additional Wyse keys with no obvious HID equivalent (accessible via web UI):
+// Func        = 0x39 (Col 7, Row 1)
+// Clr Line    = 0x04 (Col 0, Row 4) — Shift+Clr = Clr Scrn
+// Del Char    = 0x2D (Col 5, Row 5) — Shift+Del Char = Del Line
+// Repl/Ins    = 0x32 (Col 6, Row 2)
+// Send/Print  = 0x64 (Col 12, Row 4)
+// F13         = 0x50 (Col 10, Row 0)
+// F14         = 0x54 (Col 10, Row 4)
+// F15         = 0x56 (Col 10, Row 6)
+// F16         = 0x21 (Col 4, Row 1)
 
 // ============================================================
-// HID REPORT PROCESSING
+// HID REPORT PROCESSING (scan state based)
 // ============================================================
 
-static uint8_t prevKeys[6]     = {0};
-static uint8_t currentKey      = 0;
-static uint8_t currentMods     = 0;
-static uint32_t keyDownTime    = 0;
-static bool repeating          = false;
-static uint32_t lastRepeatTime = 0;
-static uint32_t ledOffTime     = 0;
+static uint32_t ledOffTime = 0;
 
 void processHidReport(const KeyReport *report) {
     uint8_t modifiers   = report->modifiers;
     const uint8_t *keys = report->keys;
 
+    // Track which Wyse addresses are currently held
+    static uint8_t prev_wyse_addrs[6] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
+    static uint8_t prev_modifiers     = 0;
+
+    // Release previous keys not in current report
     for (int i = 0; i < 6; i++) {
-        if (keys[i] == 0) continue;
-        bool isNew = true;
+        if (prev_wyse_addrs[i] == 0xFF) continue;
+        bool still_held = false;
         for (int j = 0; j < 6; j++) {
-            if (keys[i] == prevKeys[j]) {
-                isNew = false;
+            uint8_t wa = (keys[j] != 0) ? hid_to_wyse50[keys[j]] : 0xFF;
+            if (wa == prev_wyse_addrs[i]) {
+                still_held = true;
                 break;
             }
         }
-        if (isNew) {
-            processKeypress(keys[i], modifiers);
-            ledOffTime  = millis() + 30;
-            currentKey  = keys[i];
-            currentMods = modifiers;
-            keyDownTime = millis();
-            repeating   = false;
+        if (!still_held) {
+            scanKeyRelease(prev_wyse_addrs[i]);
+            prev_wyse_addrs[i] = 0xFF;
         }
     }
 
-    if (currentKey != 0) {
-        bool stillHeld = false;
-        for (int i = 0; i < 6; i++) {
-            if (keys[i] == currentKey) {
-                stillHeld = true;
-                break;
-            }
+    // Press new keys
+    for (int i = 0; i < 6; i++) {
+        if (keys[i] == 0) {
+            prev_wyse_addrs[i] = 0xFF;
+            continue;
         }
-        if (!stillHeld) {
-            currentKey = 0;
-            repeating  = false;
-        } else
-            currentMods = modifiers;
+        uint8_t addr = hid_to_wyse50[keys[i]];
+        if (addr == 0xFF) {
+            prev_wyse_addrs[i] = 0xFF;
+            continue;
+        }
+        scanKeyPress(addr);
+        prev_wyse_addrs[i] = addr;
     }
 
-    memcpy(prevKeys, keys, 6);
-}
+    // Handle modifier keys — Shift and Ctrl have physical scan addresses
+    bool shift_now = (modifiers & 0x22) != 0; // L or R Shift
+    bool shift_was = (prev_modifiers & 0x22) != 0;
+    if (shift_now && !shift_was) scanKeyPress(WYSE_SHIFT);
+    if (!shift_now && shift_was) scanKeyRelease(WYSE_SHIFT);
 
-void handleAutoRepeat() {
-    if (currentKey == 0) return;
-    uint32_t now = millis();
-    if (!repeating) {
-        if (now - keyDownTime >= config.repeat_delay_ms) {
-            repeating      = true;
-            lastRepeatTime = now;
-            processKeypress(currentKey, currentMods);
-        }
-    } else {
-        if (now - lastRepeatTime >= config.repeat_rate_ms) {
-            lastRepeatTime = now;
-            processKeypress(currentKey, currentMods);
+    bool ctrl_now = (modifiers & 0x11) != 0; // L or R Ctrl
+    bool ctrl_was = (prev_modifiers & 0x11) != 0;
+    if (ctrl_now && !ctrl_was) scanKeyPress(WYSE_CTRL);
+    if (!ctrl_now && ctrl_was) scanKeyRelease(WYSE_CTRL);
+
+    prev_modifiers = modifiers;
+
+    // LED feedback
+    for (int i = 0; i < 6; i++) {
+        if (keys[i] != 0) {
+            if (config.pin_led >= 0) digitalWrite(config.pin_led, HIGH);
+            ledOffTime = millis() + 30;
+            break;
         }
     }
 }
@@ -1230,6 +1263,7 @@ extern "C" void app_main() {
         config.ansi_mode = (digitalRead(config.pin_mode_jp) == LOW);
     }
 
+    initKeyMap();
     setupScanPins();
 
     // Start scan response on core 0 at highest priority
@@ -1274,7 +1308,6 @@ extern "C" void app_main() {
             processHidReport(&report);
         }
 
-        handleAutoRepeat();
         handlePairButton();
 
         // Mode jumper check (throttled)
