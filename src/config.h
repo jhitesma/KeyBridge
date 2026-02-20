@@ -29,29 +29,19 @@ struct SpecialKeyEntry {
 };
 
 struct AdapterConfig {
-    // --- Pin assignments ---
-    int8_t pin_d0;
-    int8_t pin_d1;
-    int8_t pin_d2;
-    int8_t pin_d3;
-    int8_t pin_d4;
-    int8_t pin_d5;
-    int8_t pin_d6;
-    int8_t pin_strobe;
+    // --- Pin assignments (scan interface) ---
+    int8_t pin_addr[7];    // Address bits A0-A6 from terminal (inputs via TXS0108E)
+    int8_t pin_key_return; // Key Return to terminal (output via 2N7000 MOSFET)
     int8_t pin_pair_btn;
     int8_t pin_mode_jp;
     int8_t pin_led;
     int8_t pin_bt_led;
 
     // --- Terminal settings ---
-    bool ansi_mode;         // false = Native, true = ANSI (default from jumper)
-    bool use_mode_jumper;   // true = read from hardware jumper
-    bool strobe_active_low; // true = idle HIGH, pulse LOW
+    bool ansi_mode;       // false = Native, true = ANSI (default from jumper)
+    bool use_mode_jumper; // true = read from hardware jumper
 
     // --- Timing ---
-    uint16_t strobe_pulse_us;
-    uint16_t data_setup_us;
-    uint16_t inter_char_delay_us;
     uint16_t repeat_delay_ms;
     uint16_t repeat_rate_ms;
 
@@ -81,31 +71,27 @@ struct AdapterConfig {
 // ============================================================
 
 static void setDefaultConfig(AdapterConfig &cfg) {
-    // Pins
-    cfg.pin_d0       = 4;
-    cfg.pin_d1       = 5;
-    cfg.pin_d2       = 6;
-    cfg.pin_d3       = 7;
-    cfg.pin_d4       = 15;
-    cfg.pin_d5       = 16;
-    cfg.pin_d6       = 17;
-    cfg.pin_strobe   = 18;
-    cfg.pin_pair_btn = 0;
-    cfg.pin_mode_jp  = 38;
-    cfg.pin_led      = 2;
-    cfg.pin_bt_led   = -1;
+    // Scan interface pins (match J3 wiring table — avoid GPIOs 6-11 on ESP32)
+    cfg.pin_addr[0]    = 4;   // A0 — J3 pin 6
+    cfg.pin_addr[1]    = 5;   // A1 — J3 pin 5
+    cfg.pin_addr[2]    = 14;  // A2 — J3 pin 4
+    cfg.pin_addr[3]    = 15;  // A3 — J3 pin 7
+    cfg.pin_addr[4]    = 13;  // A4 — J3 pin 10
+    cfg.pin_addr[5]    = 16;  // A5 — J3 pin 8
+    cfg.pin_addr[6]    = 17;  // A6 — J3 pin 9
+    cfg.pin_key_return = 18;  // Key Return — J3 pin 11 (via 2N7000)
+    cfg.pin_pair_btn   = 0;
+    cfg.pin_mode_jp    = -1;  // No mode jumper by default on ESP32
+    cfg.pin_led        = 2;
+    cfg.pin_bt_led     = -1;
 
     // Terminal
-    cfg.ansi_mode         = false;
-    cfg.use_mode_jumper   = true;
-    cfg.strobe_active_low = true;
+    cfg.ansi_mode       = false;
+    cfg.use_mode_jumper = false;
 
     // Timing
-    cfg.strobe_pulse_us     = 10;
-    cfg.data_setup_us       = 5;
-    cfg.inter_char_delay_us = 200;
-    cfg.repeat_delay_ms     = 500;
-    cfg.repeat_rate_ms      = 67;
+    cfg.repeat_delay_ms = 500;
+    cfg.repeat_rate_ms  = 67;
 
     // Features
     cfg.enable_usb        = true;
@@ -227,7 +213,7 @@ static Preferences prefs;
 bool saveConfig(const AdapterConfig &cfg) {
     prefs.begin("kb_cfg", false);
     size_t written = prefs.putBytes("config", &cfg, sizeof(cfg));
-    prefs.putUInt("version", 5);
+    prefs.putUInt("version", 6);
     prefs.end();
     return (written == sizeof(cfg));
 }
@@ -235,7 +221,7 @@ bool saveConfig(const AdapterConfig &cfg) {
 bool loadConfig(AdapterConfig &cfg) {
     prefs.begin("kb_cfg", true);
     uint32_t version = prefs.getUInt("version", 0);
-    if (version != 5) {
+    if (version != 6) {
         prefs.end();
         return false; // No saved config or version mismatch
     }
@@ -322,34 +308,28 @@ String seqToReadable(const char *seq) {
 String configToJson(const AdapterConfig &cfg) {
     JsonDocument doc;
 
-    // Pins
-    JsonObject pins  = doc["pins"].to<JsonObject>();
-    pins["d0"]       = cfg.pin_d0;
-    pins["d1"]       = cfg.pin_d1;
-    pins["d2"]       = cfg.pin_d2;
-    pins["d3"]       = cfg.pin_d3;
-    pins["d4"]       = cfg.pin_d4;
-    pins["d5"]       = cfg.pin_d5;
-    pins["d6"]       = cfg.pin_d6;
-    pins["strobe"]   = cfg.pin_strobe;
-    pins["pair_btn"] = cfg.pin_pair_btn;
-    pins["mode_jp"]  = cfg.pin_mode_jp;
-    pins["led"]      = cfg.pin_led;
-    pins["bt_led"]   = cfg.pin_bt_led;
+    // Pins (scan interface)
+    JsonObject pins = doc["pins"].to<JsonObject>();
+    for (int i = 0; i < 7; i++) {
+        char key[16];
+        snprintf(key, sizeof(key), "addr%d", i);
+        pins[key] = cfg.pin_addr[i];
+    }
+    pins["key_return"] = cfg.pin_key_return;
+    pins["pair_btn"]   = cfg.pin_pair_btn;
+    pins["mode_jp"]    = cfg.pin_mode_jp;
+    pins["led"]        = cfg.pin_led;
+    pins["bt_led"]     = cfg.pin_bt_led;
 
     // Terminal
-    JsonObject terminal           = doc["terminal"].to<JsonObject>();
-    terminal["ansi_mode"]         = cfg.ansi_mode;
-    terminal["use_mode_jumper"]   = cfg.use_mode_jumper;
-    terminal["strobe_active_low"] = cfg.strobe_active_low;
+    JsonObject terminal         = doc["terminal"].to<JsonObject>();
+    terminal["ansi_mode"]       = cfg.ansi_mode;
+    terminal["use_mode_jumper"] = cfg.use_mode_jumper;
 
     // Timing
-    JsonObject timing             = doc["timing"].to<JsonObject>();
-    timing["strobe_pulse_us"]     = cfg.strobe_pulse_us;
-    timing["data_setup_us"]       = cfg.data_setup_us;
-    timing["inter_char_delay_us"] = cfg.inter_char_delay_us;
-    timing["repeat_delay_ms"]     = cfg.repeat_delay_ms;
-    timing["repeat_rate_ms"]      = cfg.repeat_rate_ms;
+    JsonObject timing         = doc["timing"].to<JsonObject>();
+    timing["repeat_delay_ms"] = cfg.repeat_delay_ms;
+    timing["repeat_rate_ms"]  = cfg.repeat_rate_ms;
 
     // Features
     JsonObject features    = doc["features"].to<JsonObject>();
@@ -389,8 +369,8 @@ String configToJson(const AdapterConfig &cfg) {
 
 static bool isValidGPIO(int8_t pin) {
     if (pin == -1) return true;
-    if (pin < 0 || pin > 48) return false;
-    if (pin >= 26 && pin <= 32) return false; // SPI flash/PSRAM
+    if (pin < 0 || pin > 39) return false;       // ESP32 has GPIO 0-39
+    if (pin >= 6 && pin <= 11) return false;      // Internal flash (WROOM-32)
     return true;
 }
 
@@ -399,40 +379,20 @@ bool jsonToConfig(const String &json, AdapterConfig &cfg) {
     DeserializationError err = deserializeJson(doc, json);
     if (err) return false;
 
-    // Pins
+    // Pins (scan interface)
     if (doc.containsKey("pins")) {
         JsonObject pins = doc["pins"];
-        if (pins.containsKey("d0")) {
-            int8_t v = pins["d0"];
-            if (isValidGPIO(v)) cfg.pin_d0 = v;
+        for (int i = 0; i < 7; i++) {
+            char key[16];
+            snprintf(key, sizeof(key), "addr%d", i);
+            if (pins.containsKey(key)) {
+                int8_t v = pins[key];
+                if (isValidGPIO(v)) cfg.pin_addr[i] = v;
+            }
         }
-        if (pins.containsKey("d1")) {
-            int8_t v = pins["d1"];
-            if (isValidGPIO(v)) cfg.pin_d1 = v;
-        }
-        if (pins.containsKey("d2")) {
-            int8_t v = pins["d2"];
-            if (isValidGPIO(v)) cfg.pin_d2 = v;
-        }
-        if (pins.containsKey("d3")) {
-            int8_t v = pins["d3"];
-            if (isValidGPIO(v)) cfg.pin_d3 = v;
-        }
-        if (pins.containsKey("d4")) {
-            int8_t v = pins["d4"];
-            if (isValidGPIO(v)) cfg.pin_d4 = v;
-        }
-        if (pins.containsKey("d5")) {
-            int8_t v = pins["d5"];
-            if (isValidGPIO(v)) cfg.pin_d5 = v;
-        }
-        if (pins.containsKey("d6")) {
-            int8_t v = pins["d6"];
-            if (isValidGPIO(v)) cfg.pin_d6 = v;
-        }
-        if (pins.containsKey("strobe")) {
-            int8_t v = pins["strobe"];
-            if (isValidGPIO(v)) cfg.pin_strobe = v;
+        if (pins.containsKey("key_return")) {
+            int8_t v = pins["key_return"];
+            if (isValidGPIO(v)) cfg.pin_key_return = v;
         }
         if (pins.containsKey("pair_btn")) {
             int8_t v = pins["pair_btn"];
@@ -457,24 +417,11 @@ bool jsonToConfig(const String &json, AdapterConfig &cfg) {
         JsonObject t = doc["terminal"];
         if (t.containsKey("ansi_mode")) cfg.ansi_mode = t["ansi_mode"];
         if (t.containsKey("use_mode_jumper")) cfg.use_mode_jumper = t["use_mode_jumper"];
-        if (t.containsKey("strobe_active_low")) cfg.strobe_active_low = t["strobe_active_low"];
     }
 
     // Timing
     if (doc.containsKey("timing")) {
         JsonObject t = doc["timing"];
-        if (t.containsKey("strobe_pulse_us")) {
-            uint16_t v = t["strobe_pulse_us"];
-            if (v >= 1 && v <= 1000) cfg.strobe_pulse_us = v;
-        }
-        if (t.containsKey("data_setup_us")) {
-            uint16_t v = t["data_setup_us"];
-            if (v >= 1 && v <= 100) cfg.data_setup_us = v;
-        }
-        if (t.containsKey("inter_char_delay_us")) {
-            uint16_t v = t["inter_char_delay_us"];
-            if (v <= 10000) cfg.inter_char_delay_us = v;
-        }
         if (t.containsKey("repeat_delay_ms")) {
             uint16_t v = t["repeat_delay_ms"];
             if (v >= 50 && v <= 5000) cfg.repeat_delay_ms = v;

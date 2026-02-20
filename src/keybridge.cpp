@@ -116,28 +116,23 @@ void submitKeyReport(uint8_t modifiers, const uint8_t *keys) {
 // GPIO OUTPUT
 // ============================================================
 
-static int8_t activePins[7] = {0};
-static int8_t activeStrobe  = 0;
+// Scan interface pins (populated in setupScanPins, used by scan response task)
+static int8_t scanAddrPins[7] = {0};
+static int8_t scanReturnPin   = 0;
 
-void setupOutputPins() {
-    activePins[0] = config.pin_d0;
-    activePins[1] = config.pin_d1;
-    activePins[2] = config.pin_d2;
-    activePins[3] = config.pin_d3;
-    activePins[4] = config.pin_d4;
-    activePins[5] = config.pin_d5;
-    activePins[6] = config.pin_d6;
-    activeStrobe  = config.pin_strobe;
-
+void setupScanPins() {
+    // Address inputs (from terminal via TXS0108E)
     for (int i = 0; i < 7; i++) {
-        if (activePins[i] >= 0) {
-            pinMode(activePins[i], OUTPUT);
-            digitalWrite(activePins[i], LOW);
+        scanAddrPins[i] = config.pin_addr[i];
+        if (scanAddrPins[i] >= 0) {
+            pinMode(scanAddrPins[i], INPUT);
         }
     }
-    if (activeStrobe >= 0) {
-        pinMode(activeStrobe, OUTPUT);
-        digitalWrite(activeStrobe, config.strobe_active_low ? HIGH : LOW);
+    // Key Return output (to terminal via 2N7000 MOSFET)
+    scanReturnPin = config.pin_key_return;
+    if (scanReturnPin >= 0) {
+        pinMode(scanReturnPin, OUTPUT);
+        digitalWrite(scanReturnPin, LOW); // MOSFET off = key not pressed
     }
 
     if (config.pin_pair_btn >= 0) pinMode(config.pin_pair_btn, INPUT_PULLUP);
@@ -152,33 +147,18 @@ void setupOutputPins() {
     }
 }
 
+// Placeholder — replaced in Task 3 with scan key_state[] updates
 void sendChar(uint8_t ascii) {
-    ascii &= 0x7F;
-
-    for (int i = 0; i < 7; i++) {
-        if (activePins[i] >= 0) {
-            digitalWrite(activePins[i], (ascii >> i) & 0x01);
-        }
-    }
-    delayMicroseconds(config.data_setup_us);
-
-    if (activeStrobe >= 0) {
-        digitalWrite(activeStrobe, config.strobe_active_low ? LOW : HIGH);
-        delayMicroseconds(config.strobe_pulse_us);
-        digitalWrite(activeStrobe, config.strobe_active_low ? HIGH : LOW);
-    }
-
     if (ascii >= 0x20 && ascii < 0x7F) {
-        logKey("TX: 0x%02X '%c'", ascii, ascii);
+        logKey("TX: 0x%02X '%c' (scan engine not yet active)", ascii, ascii);
     } else {
-        logKey("TX: 0x%02X (ctrl)", ascii);
+        logKey("TX: 0x%02X (scan engine not yet active)", ascii);
     }
 }
 
 void sendString(const char *str) {
     while (*str) {
         sendChar((uint8_t)*str++);
-        if (*str) delayMicroseconds(config.inter_char_delay_us);
     }
 }
 
@@ -279,7 +259,6 @@ void processKeypress(uint8_t keycode, uint8_t modifiers) {
 
     if (alt) {
         sendChar(0x1B);
-        delayMicroseconds(config.inter_char_delay_us);
     }
 
     sendChar(ascii);
@@ -1183,7 +1162,7 @@ extern "C" void app_main() {
         config.ansi_mode = (digitalRead(config.pin_mode_jp) == LOW);
     }
 
-    setupOutputPins();
+    setupScanPins();
 
     ESP_LOGI(TAG, "========================================");
     ESP_LOGI(TAG, " KeyBridge  v5.0");
