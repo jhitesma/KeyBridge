@@ -114,10 +114,6 @@ void submitKeyReport(uint8_t modifiers, const uint8_t *keys) {
 }
 
 // ============================================================
-// GPIO OUTPUT
-// ============================================================
-
-// ============================================================
 // KEYBOARD SCAN EMULATION
 // ============================================================
 
@@ -179,16 +175,6 @@ void scanKeyRelease(uint8_t addr) {
 // Release all keys
 void scanReleaseAll() {
     memset((void *)key_state, 0, sizeof(key_state));
-}
-
-// Placeholder sendChar/sendString — still called by processKeypress()
-// until Task 4 replaces the HID processing with scan state updates
-void sendChar(uint8_t ascii) {
-    logKey("TX: 0x%02X (scan engine pending HID mapping)", ascii);
-}
-
-void sendString(const char *str) {
-    while (*str) sendChar((uint8_t)*str++);
 }
 
 // ============================================================
@@ -1004,7 +990,6 @@ void startWebServer() {
         JsonDocument doc;
         doc["usb_connected"] = (bool)usb_keyboard_connected;
         doc["bt_connected"]  = (bool)bt_keyboard_connected;
-        doc["ansi_mode"]     = config.ansi_mode;
         doc["uptime_sec"]    = millis() / 1000;
         doc["free_heap"]     = esp_get_free_heap_size();
         doc["wifi_mode"]     = wifi_sta_mode ? "STA" : "AP";
@@ -1050,32 +1035,6 @@ void startWebServer() {
         String out;
         serializeJson(doc, out);
         server.send(200, "application/json", out);
-    });
-
-    // Test character send (auth required)
-    server.on("/api/test", HTTP_POST, []() {
-        if (!isAuthenticated()) { sendUnauthorized(); return; }
-        JsonDocument doc;
-        if (deserializeJson(doc, server.arg("plain"))) {
-            server.send(400, "application/json", "{\"ok\":false,\"error\":\"Invalid JSON\"}");
-            return;
-        }
-        const char *val = doc["char"] | "";
-        if (strlen(val) == 1) {
-            sendChar((uint8_t)val[0]);
-        } else if (strlen(val) == 2) {
-            char *endptr;
-            long byte = strtol(val, &endptr, 16);
-            if (endptr != val + 2 || byte < 0 || byte > 127) {
-                server.send(400, "application/json", "{\"ok\":false,\"error\":\"Invalid hex (00-7F)\"}");
-                return;
-            }
-            sendChar((uint8_t)byte);
-        } else {
-            server.send(400, "application/json", "{\"ok\":false,\"error\":\"Expected 1 char or 2-char hex\"}");
-            return;
-        }
-        server.send(200, "application/json", "{\"ok\":true}");
     });
 
     // Scan snoop — start/stop address monitoring
@@ -1154,60 +1113,6 @@ void startWebServer() {
             delay(gap_ms);
         }
         logKey("[SCAN] Sweep complete");
-    });
-
-    // Presets (auth required)
-    server.on("/api/preset/wyse50", HTTP_GET, []() {
-        if (!isAuthenticated()) { sendUnauthorized(); return; }
-        AdapterConfig tmp;
-        setDefaultConfig(tmp);
-        JsonDocument doc;
-        JsonArray keys = doc["special_keys"].to<JsonArray>();
-        for (int i = 0; i < tmp.num_special_keys; i++) {
-            JsonObject k        = keys.add<JsonObject>();
-            k["keycode"]        = tmp.special_keys[i].hid_keycode;
-            k["label"]          = tmp.special_keys[i].label;
-            k["native_hex"]     = seqToHex(tmp.special_keys[i].seq_native);
-            k["ansi_hex"]       = seqToHex(tmp.special_keys[i].seq_ansi);
-            k["native_display"] = seqToReadable(tmp.special_keys[i].seq_native);
-            k["ansi_display"]   = seqToReadable(tmp.special_keys[i].seq_ansi);
-            k["enabled"]        = true;
-        }
-        String out;
-        serializeJson(doc, out);
-        server.send(200, "application/json", out);
-    });
-
-    server.on("/api/preset/vt100", HTTP_GET, []() {
-        if (!isAuthenticated()) { sendUnauthorized(); return; }
-        // VT100 uses standard ANSI sequences in both columns
-        String out =
-            "{\"special_keys\":["
-            "{\"keycode\":58,\"label\":\"F1\",\"native_hex\":\"1b4f50\",\"ansi_hex\":\"1b4f50\",\"native_display\":\"ESC O P\",\"ansi_display\":\"ESC O P\",\"enabled\":true},"
-            "{\"keycode\":59,\"label\":\"F2\",\"native_hex\":\"1b4f51\",\"ansi_hex\":\"1b4f51\",\"native_display\":\"ESC O Q\",\"ansi_display\":\"ESC O Q\",\"enabled\":true},"
-            "{\"keycode\":60,\"label\":\"F3\",\"native_hex\":\"1b4f52\",\"ansi_hex\":\"1b4f52\",\"native_display\":\"ESC O R\",\"ansi_display\":\"ESC O R\",\"enabled\":true},"
-            "{\"keycode\":61,\"label\":\"F4\",\"native_hex\":\"1b4f53\",\"ansi_hex\":\"1b4f53\",\"native_display\":\"ESC O S\",\"ansi_display\":\"ESC O S\",\"enabled\":true},"
-            "{\"keycode\":82,\"label\":\"Up\",\"native_hex\":\"1b5b41\",\"ansi_hex\":\"1b5b41\",\"native_display\":\"ESC [ A\",\"ansi_display\":\"ESC [ A\",\"enabled\":true},"
-            "{\"keycode\":81,\"label\":\"Down\",\"native_hex\":\"1b5b42\",\"ansi_hex\":\"1b5b42\",\"native_display\":\"ESC [ B\",\"ansi_display\":\"ESC [ B\",\"enabled\":true},"
-            "{\"keycode\":79,\"label\":\"Right\",\"native_hex\":\"1b5b43\",\"ansi_hex\":\"1b5b43\",\"native_display\":\"ESC [ C\",\"ansi_display\":\"ESC [ C\",\"enabled\":true},"
-            "{\"keycode\":80,\"label\":\"Left\",\"native_hex\":\"1b5b44\",\"ansi_hex\":\"1b5b44\",\"native_display\":\"ESC [ D\",\"ansi_display\":\"ESC [ D\",\"enabled\":true},"
-            "{\"keycode\":74,\"label\":\"Home\",\"native_hex\":\"1b5b48\",\"ansi_hex\":\"1b5b48\",\"native_display\":\"ESC [ H\",\"ansi_display\":\"ESC [ H\",\"enabled\":true}"
-            "]}";
-        server.send(200, "application/json", out);
-    });
-
-    server.on("/api/preset/adm3a", HTTP_GET, []() {
-        if (!isAuthenticated()) { sendUnauthorized(); return; }
-        // ADM-3A: very simple, arrows are Ctrl codes, no function keys
-        String out =
-            "{\"special_keys\":["
-            "{\"keycode\":82,\"label\":\"Up\",\"native_hex\":\"0b\",\"ansi_hex\":\"0b\",\"native_display\":\"^K\",\"ansi_display\":\"^K\",\"enabled\":true},"
-            "{\"keycode\":81,\"label\":\"Down\",\"native_hex\":\"0a\",\"ansi_hex\":\"0a\",\"native_display\":\"^J\",\"ansi_display\":\"^J\",\"enabled\":true},"
-            "{\"keycode\":79,\"label\":\"Right\",\"native_hex\":\"0c\",\"ansi_hex\":\"0c\",\"native_display\":\"^L\",\"ansi_display\":\"^L\",\"enabled\":true},"
-            "{\"keycode\":80,\"label\":\"Left\",\"native_hex\":\"08\",\"ansi_hex\":\"08\",\"native_display\":\"^H\",\"ansi_display\":\"^H\",\"enabled\":true},"
-            "{\"keycode\":74,\"label\":\"Home\",\"native_hex\":\"1e\",\"ansi_hex\":\"1e\",\"native_display\":\"^^\",\"ansi_display\":\"^^\",\"enabled\":true}"
-            "]}";
-        server.send(200, "application/json", out);
     });
 
     // Login
@@ -1316,15 +1221,6 @@ void handlePairButton() {
     pairBtnLastState = state;
 }
 
-void checkModeJumper() {
-    if (!config.use_mode_jumper || config.pin_mode_jp < 0) return;
-    bool newMode = (digitalRead(config.pin_mode_jp) == LOW);
-    if (newMode != config.ansi_mode) {
-        config.ansi_mode = newMode;
-        logKey("Mode: %s (jumper)", config.ansi_mode ? "ANSI" : "Native");
-    }
-}
-
 // ############################################################
 //  SETUP AND LOOP
 // ############################################################
@@ -1349,12 +1245,6 @@ extern "C" void app_main() {
     // Load admin password (empty = no auth until user sets one)
     loadAdminPass();
 
-    // Read mode jumper at boot
-    if (config.use_mode_jumper && config.pin_mode_jp >= 0) {
-        pinMode(config.pin_mode_jp, INPUT_PULLUP);
-        config.ansi_mode = (digitalRead(config.pin_mode_jp) == LOW);
-    }
-
     initKeyMap();
     setupScanPins();
 
@@ -1366,7 +1256,6 @@ extern "C" void app_main() {
     ESP_LOGI(TAG, " KeyBridge  v5.0");
     ESP_LOGI(TAG, " Web-configurable | BT Classic + BLE");
     ESP_LOGI(TAG, "----------------------------------------");
-    ESP_LOGI(TAG, " Mode:    %s", config.ansi_mode ? "ANSI/VT100" : "Native");
     ESP_LOGI(TAG, " BT:      Classic=%s  BLE=%s",
              config.enable_bt_classic ? "ON" : "off",
              config.enable_ble ? "ON" : "off");
@@ -1401,13 +1290,6 @@ extern "C" void app_main() {
         }
 
         handlePairButton();
-
-        // Mode jumper check (throttled)
-        static uint8_t modeCounter = 0;
-        if (++modeCounter >= 100) {
-            modeCounter = 0;
-            checkModeJumper();
-        }
 
         // Web server + captive portal DNS
         if (config.enable_wifi) {
