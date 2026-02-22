@@ -221,8 +221,11 @@ static void scan_response_task(void *arg) {
             REG_WRITE(GPIO_OUT_W1TC_REG, return_mask); // LOW = MOSFET off = not pressed
         }
 
-        // Yield briefly every ~100k iterations to let other core-0 tasks breathe
-        if (++yield_counter >= 100000) {
+        // Yield briefly every ~10k iterations (~2ms at 240MHz) to let
+        // WiFi/BT tasks on core 0 run. At 1kHz tick rate, vTaskDelay(1)
+        // blocks for 1ms — the terminal rescans all addresses every ~1ms
+        // so missing one cycle is imperceptible.
+        if (++yield_counter >= 10000) {
             yield_counter = 0;
             vTaskDelay(1);
         }

@@ -21,6 +21,12 @@ CONFIG_BT_BLE_42_FEATURES_SUPPORTED=y
 # WiFi + BT coexistence (required for simultaneous WiFi AP + Classic BT)
 CONFIG_ESP_COEX_SW_COEXIST_ENABLE=y
 
+# Task watchdog: don't monitor IDLE0 — the scan response task runs at
+# max priority on core 0 and only yields briefly between scan bursts.
+# IDLE0 gets enough time to run but not enough to satisfy the default
+# WDT period. Core 1 IDLE is still monitored.
+CONFIG_ESP_TASK_WDT_CHECK_IDLE_TASK_CPU0=n
+
 # Stack size for app_main (Arduino setup/loop)
 CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192
 
