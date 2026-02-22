@@ -1274,11 +1274,13 @@ extern "C" void app_main() {
     }
     ESP_LOGI(TAG, "========================================");
 
+    // Start BT before WiFi — BT controller mem_release must happen
+    // before WiFi claims shared radio resources on ESP32
+    if (config.enable_bt_classic || config.enable_ble) startBluetooth();
     if (config.enable_wifi) startWebServer();
 #if CONFIG_SOC_USB_OTG_SUPPORTED
     if (config.enable_usb) startUsbHost();
 #endif
-    if (config.enable_bt_classic || config.enable_ble) startBluetooth();
 
     ESP_LOGI(TAG, "Free heap: %lu bytes", (unsigned long)esp_get_free_heap_size());
     ESP_LOGI(TAG, "Ready.");
