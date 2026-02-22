@@ -740,8 +740,8 @@ static esp_err_t init_low_level(uint8_t mode)
 #endif
 #if CONFIG_BT_HID_HOST_ENABLED && CONFIG_IDF_TARGET_ESP32
     if (mode & ESP_BT_MODE_CLASSIC_BT) {
-        bt_cfg.bt_max_acl_conn = 1;
-        bt_cfg.bt_max_sync_conn = 0;
+        bt_cfg.bt_max_acl_conn = 3;
+        bt_cfg.bt_max_sync_conn = 3;
     } else
 #endif
     {

@@ -670,11 +670,33 @@ static void bt_scan_task(void *arg) {
                 r = r->next;
             }
             if (best) {
-                logKey("[BT] Connecting: %s", best->name ? best->name : "?");
-                esp_hidh_dev_open(best->bda, best->transport,
-                                  best->transport == ESP_HID_TRANSPORT_BLE ? best->ble.addr_type : 0);
+                // Save connection info before freeing results
+                esp_bd_addr_t bda;
+                esp_hid_transport_t transport = best->transport;
+                uint8_t addr_type = (transport == ESP_HID_TRANSPORT_BLE) ? best->ble.addr_type : 0;
+                memcpy(bda, best->bda, sizeof(esp_bd_addr_t));
+                char name[64] = "?";
+                if (best->name) strlcpy(name, best->name, sizeof(name));
+                esp_hid_scan_results_free(results);
+                results = NULL;
+
+                // Let scan fully settle before opening connection
+                logKey("[BT] Connecting: %s", name);
+                vTaskDelay(pdMS_TO_TICKS(1500));
+
+                // Try connection — retry once if SDP fails (auth may complete after first attempt)
+                for (int attempt = 0; attempt < 2; attempt++) {
+                    esp_hidh_dev_open(bda, transport, addr_type);
+                    // Wait for OPEN event (success or failure via hidh_callback)
+                    vTaskDelay(pdMS_TO_TICKS(5000));
+                    if (bt_keyboard_connected) break;
+                    if (attempt == 0) {
+                        logKey("[BT] Retrying connection...");
+                        vTaskDelay(pdMS_TO_TICKS(2000));
+                    }
+                }
             }
-            esp_hid_scan_results_free(results);
+            if (results) esp_hid_scan_results_free(results);
         } else {
             logKey("[BT] No devices found");
         }
