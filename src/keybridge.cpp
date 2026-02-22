@@ -10,6 +10,12 @@
  * Framework: Arduino + ESP-IDF (combined)
  */
 
+// Prevent Arduino's initArduino() from releasing BT controller memory.
+// The weak btInUse() in esp32-hal-misc.c returns false, which triggers
+// esp_bt_controller_mem_release(ESP_BT_MODE_BTDM) before our code runs.
+// This strong override ensures the memory stays allocated for esp_hid_gap.
+extern "C" bool btInUse() { return true; }
+
 #include <stdlib.h>
 #include <string.h>
 #include "esp_log.h"
