@@ -1257,9 +1257,10 @@ extern "C" void app_main() {
     initKeyMap();
     setupScanPins();
 
-    // Start scan response on core 0 at highest priority
-    xTaskCreatePinnedToCore(scan_response_task, "scan", 4096, NULL,
-                            configMAX_PRIORITIES - 1, NULL, 0);
+    // Start scan response on core 0.
+    // Priority must be BELOW the BT controller (23) to avoid starving
+    // the link-layer during ACL connection setup (ld_acl.c assertions).
+    xTaskCreatePinnedToCore(scan_response_task, "scan", 4096, NULL, 20, NULL, 0);
 
     ESP_LOGI(TAG, "========================================");
     ESP_LOGI(TAG, " KeyBridge  v5.0");
